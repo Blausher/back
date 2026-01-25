@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
@@ -40,11 +41,46 @@ def test_predict_negative_no_violation():
     assert response.json() is False
 
 
-def test_predict_validation_error_on_type():
+INVALID_PAYLOADS = [
+    ({"seller_id": "abc"}, "seller_id"),
+    ({"is_verified_seller": {"yes": True}}, "is_verified_seller"),
+    ({"item_id": []}, "item_id"),
+    ({"name": 123}, "name"),
+    ({"description": 123}, "description"),
+    ({"category": "x"}, "category"),
+    ({"images_qty": []}, "images_qty"),
+]
+
+MISSING_REQUIRED_FIELDS = [
+    "seller_id",
+    "is_verified_seller",
+    "item_id",
+    "name",
+    "description",
+    "category",
+    "images_qty",
+]
+
+
+@pytest.mark.parametrize("patch, _label", INVALID_PAYLOADS)
+def test_predict_validation_error_on_invalid_values(patch, _label):
     '''
-    валидация значений
+    валидация значений (тип, содержимое)
     '''
-    payload = {**VALID_PAYLOAD, "seller_id": "abc"}
+    payload = {**VALID_PAYLOAD, **patch}
+
+    response = client.post("/predict", json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("missing_field", MISSING_REQUIRED_FIELDS)
+def test_predict_validation_error_on_missing_field(missing_field):
+    '''
+    валидация обязательных аргументов
+    '''
+    payload = {**VALID_PAYLOAD}
+    payload.pop(missing_field)
 
     response = client.post("/predict", json=payload)
 
