@@ -1,12 +1,12 @@
 from fastapi import FastAPI
-# from routers.users import router as user_router
 import uvicorn
+
+from routers import predict, root
 
 app = FastAPI()
 
-@app.get('/')
-async def root():
-    return {'message': 'Hello World'}
+app.include_router(root.router)
+app.include_router(predict.router)
 
 
 if __name__ == '__main__':
