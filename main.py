@@ -1,9 +1,19 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
 
 from routers import predict, root
+from services.model import load_or_train_model
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.model = load_or_train_model("model.pkl")
+
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.include_router(root.router)
 app.include_router(predict.router)
