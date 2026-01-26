@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import logging
+
 from fastapi import FastAPI
 import uvicorn
 
@@ -12,6 +14,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(lifespan=lifespan)
 
