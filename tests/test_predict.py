@@ -6,6 +6,17 @@ from services import moderation
 
 client = TestClient(app)
 
+
+class DummyModel:
+    '''
+    Заглушка для модели
+    '''
+    def __init__(self, prob: float):
+        self.prob = prob
+
+    def predict_proba(self, features):
+        return [[1.0 - self.prob, self.prob]]
+
 VALID_PAYLOAD = {
     "seller_id": 1,
     "is_verified_seller": False,
@@ -17,28 +28,38 @@ VALID_PAYLOAD = {
 }
 
 
-def test_predict_positive_violation():
+def test_predict_positive_violation(monkeypatch):
     '''
     положительный результат предсказания
     '''
+    app.state.model = DummyModel(0.87)
+    monkeypatch.setattr(moderation, "predict_has_violations", lambda _: True)
+
     payload = {**VALID_PAYLOAD, "is_verified_seller": False, "images_qty": 0}
 
     response = client.post("/predict", json=payload)
 
     assert response.status_code == 200
-    assert response.json() is True
+    body = response.json()
+    assert body["is_violation"] is True
+    assert body["probability"] == 0.87
 
 
-def test_predict_negative_no_violation():
+def test_predict_negative_no_violation(monkeypatch):
     '''
     отрицательный результат предсказания
     '''
+    app.state.model = DummyModel(0.12)
+    monkeypatch.setattr(moderation, "predict_has_violations", lambda _: False)
+
     payload = {**VALID_PAYLOAD, "is_verified_seller": True, "images_qty": 0}
 
     response = client.post("/predict", json=payload)
 
     assert response.status_code == 200
-    assert response.json() is False
+    body = response.json()
+    assert body["is_violation"] is False
+    assert body["probability"] == 0.12
 
 
 INVALID_PAYLOADS = [
@@ -88,6 +109,8 @@ def test_predict_validation_error_on_missing_field(missing_field):
 
 
 def test_predict_business_logic_error(monkeypatch):
+    app.state.model = DummyModel(0.33)
+
     def raise_error(_):
         raise moderation.BusinessLogicError("boom")
 
@@ -96,4 +119,13 @@ def test_predict_business_logic_error(monkeypatch):
     response = client.post("/predict", json=VALID_PAYLOAD)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Business logic error"
+    assert response.json()["detail"] == "Business logic prediction failed"
+
+
+def test_predict_model_unavailable():
+    app.state.model = None
+
+    response = client.post("/predict", json=VALID_PAYLOAD)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Model is not loaded"
