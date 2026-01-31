@@ -55,7 +55,7 @@ async def simple_predict(item_id: int, request: Request) -> bool:
         probability,
     )
 
-    return is_valid
+    return {"is_valid": is_valid, "probability": probability}
 
 
 def _get_model(request: Request):
