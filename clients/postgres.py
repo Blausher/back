@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 async def get_pg_connection() -> AsyncGenerator[None, asyncpg.Connection]:
 
     connection: asyncpg.Connection = await asyncpg.connect(
-        user='postgres',
+        user='blausher',
         password='postgres',
-        database='lesson',
+        database='back',
         host='localhost',
         port=5432
     )

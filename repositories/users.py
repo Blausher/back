@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from clients.postgres import get_pg_connection
+from models.user import User
 
 
 @dataclass(frozen=True)
@@ -22,8 +23,9 @@ class UserStorage:
 class UserRepository:
     user_storage: UserStorage = UserStorage()
 
-    async def create(self, user_id: int, is_verified_seller: bool) -> Mapping[str, Any]:
-        return await self.user_storage.create(
+    async def create(self, user_id: int, is_verified_seller: bool) -> User:
+        raw_user = await self.user_storage.create(
             user_id=user_id,
             is_verified_seller=is_verified_seller,
         )
+        return User.model_validate(raw_user)

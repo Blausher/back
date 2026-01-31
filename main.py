@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI
 import uvicorn
 
-from routers import predict, root
+from routers import entities, predict, root
 from services.model import load_or_train_model
 
 
@@ -21,6 +21,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(root.router)
 app.include_router(predict.router)
+app.include_router(entities.router)
 
 
 if __name__ == '__main__':

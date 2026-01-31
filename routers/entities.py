@@ -1,0 +1,49 @@
+import logging
+
+from asyncpg import exceptions as pg_exc
+from fastapi import APIRouter, HTTPException
+
+from models.advertisement import Advertisement
+from models.advertisement_create import AdvertisementCreate
+from models.user import User
+from repositories.advertisements import AdvertisementRepository
+from repositories.users import UserRepository
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+advertisement_repo = AdvertisementRepository()
+user_repo = UserRepository()
+
+
+@router.post("/users", response_model=User)
+async def create_user(user: User) -> User:
+    try:
+        return await user_repo.create(
+            user_id=user.id,
+            is_verified_seller=user.is_verified_seller,
+        )
+    except pg_exc.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail="User already exists") from exc
+    except Exception as exc:
+        logger.exception("Create user failed")
+        raise HTTPException(status_code=503, detail="Database is not available") from exc
+
+
+@router.post("/advertisements", response_model=Advertisement)
+async def create_advertisement(advertisement: AdvertisementCreate) -> Advertisement:
+    try:
+        return await advertisement_repo.create(
+            seller_id=advertisement.seller_id,
+            item_id=advertisement.item_id,
+            name=advertisement.name,
+            description=advertisement.description,
+            category=advertisement.category,
+            images_qty=advertisement.images_qty,
+        )
+    except pg_exc.ForeignKeyViolationError as exc:
+        raise HTTPException(status_code=404, detail="Seller not found") from exc
+    except pg_exc.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail="Advertisement already exists") from exc
+    except Exception as exc:
+        logger.exception("Create advertisement failed")
+        raise HTTPException(status_code=503, detail="Database is not available") from exc
