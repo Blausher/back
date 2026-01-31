@@ -33,6 +33,7 @@ class DummyConnection:
 
 
 def test_user_repository_create(monkeypatch):
+    """Создает пользователя через репозиторий и возвращает модель."""
     async def run():
         expected = {"id": 7, "is_verified_seller": True}
         connection = DummyConnection(expected)
@@ -54,6 +55,7 @@ def test_user_repository_create(monkeypatch):
 
 
 def test_advertisement_repository_create(monkeypatch):
+    """Создает объявление через репозиторий и возвращает модель."""
     async def run():
         expected = {
             "seller_id": 7,

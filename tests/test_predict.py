@@ -109,6 +109,7 @@ def test_predict_validation_error_on_missing_field(missing_field):
 
 
 def test_predict_business_logic_error(monkeypatch):
+    """Проверяет ошибку бизнес-логики."""
     app.state.model = DummyModel(0.33)
 
     def raise_error(_):
@@ -123,6 +124,7 @@ def test_predict_business_logic_error(monkeypatch):
 
 
 def test_predict_model_unavailable():
+    """Проверяет ответ при отсутствии модели."""
     app.state.model = None
 
     response = client.post("/predict", json=VALID_PAYLOAD)
@@ -132,6 +134,7 @@ def test_predict_model_unavailable():
 
 
 def test_simple_predict_success(monkeypatch):
+    """Проверяет успешный simple_predict."""
     app.state.model = DummyModel(0.87)
     monkeypatch.setattr(moderation, "predict_has_violations", lambda _: True)
 
@@ -150,6 +153,7 @@ def test_simple_predict_success(monkeypatch):
 
 
 def test_simple_predict_not_found(monkeypatch):
+    """Проверяет 404 при отсутствии объявления."""
     app.state.model = DummyModel(0.42)
 
     class DummyRepo:
