@@ -32,7 +32,7 @@ async def predict(advertisement: Advertisement, request: Request) -> dict:
 
 
 @router.get("/simple_predict")
-async def simple_predict(item_id: int, request: Request) -> bool:
+async def simple_predict(item_id: int, request: Request) -> dict:
     """
     Возвращает валидность объявления по item_id.
     """

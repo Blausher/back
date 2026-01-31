@@ -39,19 +39,21 @@ class AdvertisementStorage:
         insert_query = """
             INSERT INTO advertisements (item_id, seller_id, name, description, category, images_qty)
             VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING *
+            RETURNING item_id, seller_id, name, description, category, images_qty
         """
-        
+
         async with get_pg_connection() as connection:
-           
-            return dict(await connection.fetchrow(insert_query,
-                                                    item_id,
-                                                    seller_id,
-                                                    name,
-                                                    description,
-                                                    category,
-                                                    images_qty,
-                                                ))
+            record = await connection.fetchrow(
+                insert_query,
+                item_id,
+                seller_id,
+                name,
+                description,
+                category,
+                images_qty,
+            )
+
+        return dict(record)
                
 
 @dataclass(frozen=True)
@@ -73,7 +75,7 @@ class AdvertisementRepository:
         category: int,
         images_qty: int,
     ) -> Advertisement:
-        raw_ad = await self.advertisement_storage.create(
+        await self.advertisement_storage.create(
             seller_id=seller_id,
             item_id=item_id,
             name=name,
@@ -81,4 +83,7 @@ class AdvertisementRepository:
             category=category,
             images_qty=images_qty,
         )
+        raw_ad = await self.advertisement_storage.select_advert(item_id)
+        if raw_ad is None:
+            raise RuntimeError("Failed to fetch created advertisement")
         return Advertisement.model_validate(raw_ad)

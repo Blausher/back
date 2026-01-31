@@ -35,9 +35,8 @@ def test_predict_positive_valid(monkeypatch):
     положительный результат предсказания (валидное объявление)
     '''
     app.state.model = DummyModel(0.87)
-    monkeypatch.setattr(moderation, "predict_has_violations", lambda _: True)
 
-    payload = {**VALID_PAYLOAD, "is_verified_seller": False, "images_qty": 0}
+    payload = {**VALID_PAYLOAD, "is_verified_seller": True, "images_qty": 0}
 
     response = client.post("/predict", json=payload)
 
@@ -52,9 +51,8 @@ def test_predict_negative_invalid(monkeypatch):
     отрицательный результат предсказания (невалидное объявление)
     '''
     app.state.model = DummyModel(0.12)
-    monkeypatch.setattr(moderation, "predict_has_violations", lambda _: False)
 
-    payload = {**VALID_PAYLOAD, "is_verified_seller": True, "images_qty": 0}
+    payload = {**VALID_PAYLOAD, "is_verified_seller": False, "images_qty": 0}
 
     response = client.post("/predict", json=payload)
 
@@ -146,7 +144,9 @@ def test_simple_predict_success(monkeypatch):
     response = client.get("/simple_predict", params={"item_id": 42})
 
     assert response.status_code == 200
-    assert response.json() is True
+    body = response.json()
+    assert body["is_valid"] is True
+    assert body["probability"] == 0.87
 
 
 def test_simple_predict_not_found(monkeypatch):
