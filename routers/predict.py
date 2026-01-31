@@ -39,7 +39,7 @@ async def simple_predict(item_id: int, request: Request) -> bool:
     model = _get_model(request)
 
     try:
-        advertisement = await advertisement_repo.get_with_user(item_id)
+        advertisement = await advertisement_repo.select_advert(item_id)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Database is not available") from exc
     if advertisement is None:

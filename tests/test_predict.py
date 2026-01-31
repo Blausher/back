@@ -138,7 +138,7 @@ def test_simple_predict_success(monkeypatch):
     monkeypatch.setattr(moderation, "predict_has_violations", lambda _: True)
 
     class DummyRepo:
-        async def get_with_user(self, _item_id):
+        async def select_advert(self, _item_id):
             return Advertisement.model_validate(VALID_PAYLOAD)
 
     monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
@@ -153,7 +153,7 @@ def test_simple_predict_not_found(monkeypatch):
     app.state.model = DummyModel(0.42)
 
     class DummyRepo:
-        async def get_with_user(self, _item_id):
+        async def select_advert(self, _item_id):
             return None
 
     monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
