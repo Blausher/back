@@ -2,6 +2,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from models.advertisement import Advertisement
+from routers import predict as predict_router
 from services import moderation
 
 client = TestClient(app)
@@ -129,3 +131,34 @@ def test_predict_model_unavailable():
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Model is not loaded"
+
+
+def test_simple_predict_success(monkeypatch):
+    app.state.model = DummyModel(0.87)
+    monkeypatch.setattr(moderation, "predict_has_violations", lambda _: True)
+
+    class DummyRepo:
+        async def get_with_user(self, _item_id):
+            return Advertisement.model_validate(VALID_PAYLOAD)
+
+    monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
+
+    response = client.get("/simple_predict", params={"item_id": 42})
+
+    assert response.status_code == 200
+    assert response.json() is True
+
+
+def test_simple_predict_not_found(monkeypatch):
+    app.state.model = DummyModel(0.42)
+
+    class DummyRepo:
+        async def get_with_user(self, _item_id):
+            return None
+
+    monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
+
+    response = client.get("/simple_predict", params={"item_id": 404})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Advertisement not found"
