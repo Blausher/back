@@ -7,7 +7,7 @@ from models.advertisement import Advertisement
 
 @dataclass(frozen=True)
 class AdvertisementStorage:
-    async def get_with_user(self, item_id: int) -> Mapping[str, Any] | None:
+    async def select_advert(self, item_id: int) -> Mapping[str, Any] | None:
         query = """
             SELECT
                 a.item_id,
@@ -27,13 +27,58 @@ class AdvertisementStorage:
             return None
         return dict(record)
 
+    async def create(
+        self,
+        seller_id: int,
+        item_id: int,
+        name: str,
+        description: str,
+        category: int,
+        images_qty: int,
+    ) -> Mapping[str, Any]:
+        insert_query = """
+            INSERT INTO advertisements (item_id, seller_id, name, description, category, images_qty)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+        """
+        
+        async with get_pg_connection() as connection:
+           
+            return dict(await connection.fetchrow(insert_query,
+                                                    item_id,
+                                                    seller_id,
+                                                    name,
+                                                    description,
+                                                    category,
+                                                    images_qty,
+                                                ))
+               
 
 @dataclass(frozen=True)
 class AdvertisementRepository:
     advertisement_storage: AdvertisementStorage = AdvertisementStorage()
 
-    async def get_with_user(self, item_id: int) -> Advertisement | None:
-        raw_ad = await self.advertisement_storage.get_with_user(item_id)
+    async def select_advert(self, item_id: int) -> Advertisement | None:
+        raw_ad = await self.advertisement_storage.select_advert(item_id)
         if raw_ad is None:
             return None
+        return Advertisement.model_validate(raw_ad)
+
+    async def create(
+        self,
+        seller_id: int,
+        item_id: int,
+        name: str,
+        description: str,
+        category: int,
+        images_qty: int,
+    ) -> Advertisement:
+        raw_ad = await self.advertisement_storage.create(
+            seller_id=seller_id,
+            item_id=item_id,
+            name=name,
+            description=description,
+            category=category,
+            images_qty=images_qty,
+        )
         return Advertisement.model_validate(raw_ad)
