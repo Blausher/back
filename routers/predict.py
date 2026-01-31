@@ -15,26 +15,26 @@ advertisement_repo = AdvertisementRepository()
 @router.post("/predict")
 async def predict(advertisement: Advertisement, request: Request) -> dict:
     """
-    Возвращает факт нарушения и вероятность.
+    Возвращает валидность объявления и вероятность.
     """
     model = _get_model(request)
-    is_violation, probability = _predict(advertisement, model)
+    is_valid, probability = _predict(advertisement, model)
 
     logger.info(
-        "Predict result seller_id=%s item_id=%s is_violation=%s probability=%s",
+        "Predict result seller_id=%s item_id=%s is_valid=%s probability=%s",
         advertisement.seller_id,
         advertisement.item_id,
-        is_violation,
+        is_valid,
         probability,
     )
 
-    return {"is_violation": is_violation, "probability": probability}
+    return {"is_valid": is_valid, "probability": probability}
 
 
 @router.get("/simple_predict")
 async def simple_predict(item_id: int, request: Request) -> bool:
     """
-    Возвращает факт нарушения по item_id объявления.
+    Возвращает валидность объявления по item_id.
     """
     model = _get_model(request)
 
@@ -45,17 +45,17 @@ async def simple_predict(item_id: int, request: Request) -> bool:
     if advertisement is None:
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    is_violation, probability = _predict(advertisement, model)
+    is_valid, probability = _predict(advertisement, model)
 
     logger.info(
-        "Simple predict result seller_id=%s item_id=%s is_violation=%s probability=%s",
+        "Simple predict result seller_id=%s item_id=%s is_valid=%s probability=%s",
         advertisement.seller_id,
         advertisement.item_id,
-        is_violation,
+        is_valid,
         probability,
     )
 
-    return is_violation
+    return is_valid
 
 
 def _get_model(request: Request):
@@ -92,11 +92,11 @@ def _predict(advertisement: Advertisement, model) -> tuple[bool, float]:
         ) from exc
 
     try:
-        is_violation = moderation.predict_has_violations(advertisement)
+        is_valid = moderation.predict_has_violations(advertisement)
     except moderation.BusinessLogicError as exc:
         raise HTTPException(
             status_code=500,
             detail="Business logic prediction failed",
         ) from exc
 
-    return is_violation, probability
+    return is_valid, probability

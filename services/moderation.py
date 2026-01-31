@@ -7,10 +7,8 @@ class BusinessLogicError(RuntimeError):
 
 def predict_has_violations(ad: Advertisement) -> bool:
     '''
-    подтвержденные пользователи всегда публикуют объявления без нарушений
-    неподтвержденные – только при наличии изображений
+    возвращает валидность объявления
+    подтвержденные пользователи всегда публикуют валидные объявления
+    неподтвержденные – невалидны
     '''
-    if ad.is_verified_seller:
-        return False
-
-    return ad.images_qty == 0
+    return ad.is_verified_seller

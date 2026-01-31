@@ -30,9 +30,9 @@ VALID_PAYLOAD = {
 }
 
 
-def test_predict_positive_violation(monkeypatch):
+def test_predict_positive_valid(monkeypatch):
     '''
-    положительный результат предсказания
+    положительный результат предсказания (валидное объявление)
     '''
     app.state.model = DummyModel(0.87)
     monkeypatch.setattr(moderation, "predict_has_violations", lambda _: True)
@@ -43,13 +43,13 @@ def test_predict_positive_violation(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["is_violation"] is True
+    assert body["is_valid"] is True
     assert body["probability"] == 0.87
 
 
-def test_predict_negative_no_violation(monkeypatch):
+def test_predict_negative_invalid(monkeypatch):
     '''
-    отрицательный результат предсказания
+    отрицательный результат предсказания (невалидное объявление)
     '''
     app.state.model = DummyModel(0.12)
     monkeypatch.setattr(moderation, "predict_has_violations", lambda _: False)
@@ -60,7 +60,7 @@ def test_predict_negative_no_violation(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["is_violation"] is False
+    assert body["is_valid"] is False
     assert body["probability"] == 0.12
 
 
