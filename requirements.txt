@@ -4,3 +4,4 @@ numpy>=2.4.1
 pydantic>=2.12.5
 pytest>=8.0.0
 scikit-learn>=1.8.0
+aiokafka>=0.13.0

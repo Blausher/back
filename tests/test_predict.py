@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from main import app
+from app.main import app
 from models.advertisement import Advertisement
 from routers import predict as predict_router
 from services import moderation
