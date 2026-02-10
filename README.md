@@ -2,7 +2,7 @@
 
 Запуск проекта
 ```bash
-python main.py
+docker compose up -d
 ```
 
 Запуск тестов
