@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from models.advertisement import Advertisement
+from models.moderation_result import ModerationResult
 from routers import predict as predict_router
 from services import moderation
 
@@ -166,3 +167,74 @@ def test_simple_predict_not_found(monkeypatch):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Advertisement not found"
+
+
+def test_moderation_result_pending(monkeypatch):
+    class DummyRepo:
+        async def get_by_id(self, _task_id):
+            return ModerationResult.model_validate(
+                {
+                    "id": 123,
+                    "item_id": 42,
+                    "status": "pending",
+                    "is_violation": None,
+                    "probability": None,
+                    "error_message": None,
+                    "created_at": None,
+                    "processed_at": None,
+                }
+            )
+
+    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+
+    response = client.get("/moderation_result/123")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "task_id": 123,
+        "status": "pending",
+        "is_violation": None,
+        "probability": None,
+    }
+
+
+def test_moderation_result_completed(monkeypatch):
+    class DummyRepo:
+        async def get_by_id(self, _task_id):
+            return ModerationResult.model_validate(
+                {
+                    "id": 124,
+                    "item_id": 42,
+                    "status": "completed",
+                    "is_violation": True,
+                    "probability": 0.87,
+                    "error_message": None,
+                    "created_at": None,
+                    "processed_at": None,
+                }
+            )
+
+    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+
+    response = client.get("/moderation_result/124")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "task_id": 124,
+        "status": "completed",
+        "is_violation": True,
+        "probability": 0.87,
+    }
+
+
+def test_moderation_result_not_found(monkeypatch):
+    class DummyRepo:
+        async def get_by_id(self, _task_id):
+            return None
+
+    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+
+    response = client.get("/moderation_result/999")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Moderation task not found"

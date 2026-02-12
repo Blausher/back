@@ -1,11 +1,15 @@
 import logging
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Path, Request
 
 from clients.kafka import KafkaProducerClient
 from models.advertisement import Advertisement
-from models.async_predict import AsyncPredictRequest, AsyncPredictResponse
+from models.async_predict import (
+    AsyncPredictRequest,
+    AsyncPredictResponse,
+    ModerationResultResponse,
+)
 from repositories.advertisements import AdvertisementRepository
 from repositories.moderation_results import ModerationResultRepository
 from services import moderation
@@ -66,7 +70,7 @@ async def simple_predict(item_id: int, request: Request) -> dict:
 @router.post("/async_predict", response_model=AsyncPredictResponse)
 async def async_predict(payload: AsyncPredictRequest) -> dict:
     """
-    Создает задачу на модерацию объявления и отправляет запрос в Kafka.
+    Создает задачу на модерацию объявления по item_id и отправляет запрос в Kafka очередь.
     """
     try:
         advertisement = await advertisement_repo.select_advert(payload.item_id)
@@ -91,6 +95,28 @@ async def async_predict(payload: AsyncPredictRequest) -> dict:
         "task_id": moderation_result.id,
         "status": moderation_result.status,
         "message": "Moderation request accepted",
+    }
+
+
+@router.get("/moderation_result/{task_id}", response_model=ModerationResultResponse)
+async def moderation_result(task_id: int = Path(ge=0)) -> dict:
+    """
+    Возвращает статус задачи модерации по task_id.
+    """
+    try:
+        result = await moderation_result_repo.get_by_id(task_id)
+    except Exception as exc:
+        logger.exception("Get moderation result failed")
+        raise HTTPException(status_code=503, detail="Database is not available") from exc
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Moderation task not found")
+
+    return {
+        "task_id": result.id,
+        "status": result.status,
+        "is_violation": result.is_violation,
+        "probability": result.probability,
     }
 
 
