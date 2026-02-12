@@ -39,7 +39,7 @@ services:
     ports:
       - "15432:5432"
     volumes:
-      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+      - ./app/db/migrations:/docker-entrypoint-initdb.d
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
