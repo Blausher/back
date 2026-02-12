@@ -3,13 +3,18 @@ import logging
 import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 
+from clients.kafka import KafkaProducerClient
 from models.advertisement import Advertisement
+from models.async_predict import AsyncPredictRequest, AsyncPredictResponse
 from repositories.advertisements import AdvertisementRepository
+from repositories.moderation_results import ModerationResultRepository
 from services import moderation
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 advertisement_repo = AdvertisementRepository()
+moderation_result_repo = ModerationResultRepository()
+kafka_client = KafkaProducerClient()
 
 
 @router.post("/predict")
@@ -56,6 +61,37 @@ async def simple_predict(item_id: int, request: Request) -> dict:
     )
 
     return {"is_valid": is_valid, "probability": probability}
+
+
+@router.post("/async_predict", response_model=AsyncPredictResponse)
+async def async_predict(payload: AsyncPredictRequest) -> dict:
+    """
+    Создает задачу на модерацию объявления и отправляет запрос в Kafka.
+    """
+    try:
+        advertisement = await advertisement_repo.select_advert(payload.item_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Database is not available") from exc
+    if advertisement is None:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    try:
+        moderation_result = await moderation_result_repo.create_pending(payload.item_id)
+    except Exception as exc:
+        logger.exception("Create moderation result failed")
+        raise HTTPException(status_code=503, detail="Database is not available") from exc
+
+    try:
+        await kafka_client.send_moderation_request(payload.item_id)
+    except Exception as exc:
+        logger.exception("Kafka send failed")
+        raise HTTPException(status_code=503, detail="Kafka is not available") from exc
+
+    return {
+        "task_id": moderation_result.id,
+        "status": moderation_result.status,
+        "message": "Moderation request accepted",
+    }
 
 
 def _get_model(request: Request):

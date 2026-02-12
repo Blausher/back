@@ -57,6 +57,7 @@ services:
       POSTGRES_USER: blausher
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: back
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
     ports:
       - "8003:8003"
     depends_on:
