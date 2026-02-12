@@ -4,8 +4,10 @@ import pytest
 
 from app.errors import SellerNotFoundError
 from app.models.advertisement import Advertisement
+from app.models.moderation_result import ModerationResult
 from app.models.user import User
 from app.repositories import advertisements as ads_repo
+from app.repositories import moderation_results as mr_repo
 from app.repositories import users as users_repo
 
 
@@ -34,6 +36,14 @@ class DummyConnection:
         return self.row
 
 
+class DummyTx:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 class SequencedConnection(DummyConnection):
     def __init__(self, rows):
         super().__init__(row=None)
@@ -44,6 +54,9 @@ class SequencedConnection(DummyConnection):
         if not self.rows:
             return None
         return self.rows.pop(0)
+
+    def transaction(self):
+        return DummyTx()
 
 
 @pytest.mark.asyncio
@@ -126,3 +139,68 @@ async def test_advertisement_repository_create_raises_when_seller_missing(monkey
             category=2,
             images_qty=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_moderation_result_create_pending_returns_existing(monkeypatch):
+    """Возвращает существующую pending-задачу и не создает дубль."""
+    existing = {
+        "id": 321,
+        "item_id": 42,
+        "status": "pending",
+        "is_violation": None,
+        "probability": None,
+        "error_message": None,
+        "created_at": None,
+        "processed_at": None,
+    }
+    # Первая fetchrow (SELECT pending/completed) -> existing
+    connection = SequencedConnection(rows=[existing])
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(mr_repo, "get_pg_connection", conn_stub)
+
+    repo = mr_repo.ModerationResultRepository()
+    result = await repo.create_pending(42)
+
+    assert isinstance(result, ModerationResult)
+    assert result.id == 321
+    assert result.item_id == 42
+    assert result.status == "pending"
+    assert len(connection.fetched) == 1
+    assert "SELECT id, item_id, status" in connection.fetched[0][0]
+
+
+@pytest.mark.asyncio
+async def test_moderation_result_create_pending_returns_existing_completed(monkeypatch):
+    """Возвращает существующую completed-задачу и не создает дубль."""
+    existing = {
+        "id": 322,
+        "item_id": 42,
+        "status": "completed",
+        "is_violation": True,
+        "probability": 0.91,
+        "error_message": None,
+        "created_at": None,
+        "processed_at": None,
+    }
+    connection = SequencedConnection(rows=[existing])
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(mr_repo, "get_pg_connection", conn_stub)
+
+    repo = mr_repo.ModerationResultRepository()
+    result = await repo.create_pending(42)
+
+    assert isinstance(result, ModerationResult)
+    assert result.id == 322
+    assert result.item_id == 42
+    assert result.status == "completed"
+    assert len(connection.fetched) == 1
+    assert "SELECT id, item_id, status" in connection.fetched[0][0]

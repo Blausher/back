@@ -34,3 +34,7 @@ CREATE TABLE IF NOT EXISTS processed_events (
     moderation_result_id INTEGER NOT NULL UNIQUE REFERENCES moderation_results(id) ON DELETE CASCADE,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_moderation_results_pending_item_id
+    ON moderation_results(item_id)
+    WHERE status = 'pending';
