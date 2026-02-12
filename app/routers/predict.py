@@ -3,16 +3,16 @@ import logging
 import numpy as np
 from fastapi import APIRouter, HTTPException, Path, Request
 
-from clients.kafka import KafkaProducerClient
-from models.advertisement import Advertisement
-from models.async_predict import (
+from app.clients.kafka import KafkaProducerClient
+from app.models.advertisement import Advertisement
+from app.models.async_predict import (
     AsyncPredictRequest,
     AsyncPredictResponse,
     ModerationResultResponse,
 )
-from repositories.advertisements import AdvertisementRepository
-from repositories.moderation_results import ModerationResultRepository
-from services import moderation
+from app.repositories.advertisements import AdvertisementRepository
+from app.repositories.moderation_results import ModerationResultRepository
+from app.services import moderation
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

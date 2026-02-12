@@ -1,16 +1,20 @@
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from fastapi import FastAPI
 import uvicorn
 
-from routers import entities, predict, root
-from services.model import load_or_train_model
+from app.routers import entities, predict, root
+from app.services.model import load_or_train_model
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.model = load_or_train_model("model.pkl")
+    model = getattr(app.state, "model", None)
+    # In tests model can be injected explicitly before first request.
+    if model is None and "PYTEST_CURRENT_TEST" not in os.environ:
+        app.state.model = load_or_train_model("model.pkl")
 
     yield
 

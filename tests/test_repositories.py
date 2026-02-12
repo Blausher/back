@@ -1,10 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from models.advertisement import Advertisement
-from models.user import User
-from repositories import advertisements as ads_repo
-from repositories import users as users_repo
+from app.models.advertisement import Advertisement
+from app.models.user import User
+from app.repositories import advertisements as ads_repo
+from app.repositories import users as users_repo
 
 
 class DummyTransaction:

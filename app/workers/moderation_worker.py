@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -6,8 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from aiokafka import AIOKafkaConsumer
-from asyncpg import exceptions as pg_exc
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from app.clients.postgres import get_pg_connection
 from app.services.model import load_or_train_model
@@ -34,6 +34,7 @@ class ModerationWorker:
         bootstrap_servers: str | None = None,
         topic: str = "moderation",
         group_id: str | None = None,
+        dlq_topic: str = "moderation_dlq",
         model_path: str = "model.pkl",
     ) -> None:
         """Инициализирует consumer и загружает ML-модель."""
@@ -43,6 +44,7 @@ class ModerationWorker:
         )
         self.topic = topic
         self.group_id = group_id or os.getenv("KAFKA_MODERATION_GROUP_ID", "moderation-worker")
+        self.dlq_topic = os.getenv("KAFKA_DLQ_TOPIC", dlq_topic)
         self.model = load_or_train_model(model_path)
         self.consumer = AIOKafkaConsumer(
             self.topic,
@@ -50,21 +52,34 @@ class ModerationWorker:
             group_id=self.group_id,
             auto_offset_reset="earliest",
         )
+        self.producer = AIOKafkaProducer(
+            bootstrap_servers=self.bootstrap_servers,
+            value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+        )
 
     async def run(self) -> None:
         """Запускает бесконечный цикл чтения сообщений из Kafka."""
-        await self.consumer.start()
-        logger.info(
-            "Moderation worker started topic=%s bootstrap_servers=%s group_id=%s",
-            self.topic,
-            self.bootstrap_servers,
-            self.group_id,
-        )
+        producer_started = False
+        consumer_started = False
         try:
+            await self.producer.start()
+            producer_started = True
+            await self.consumer.start()
+            consumer_started = True
+            logger.info(
+                "Moderation worker started topic=%s dlq_topic=%s bootstrap_servers=%s group_id=%s",
+                self.topic,
+                self.dlq_topic,
+                self.bootstrap_servers,
+                self.group_id,
+            )
             async for message in self.consumer:
                 await self._handle_message(message.value)
         finally:
-            await self.consumer.stop()
+            if consumer_started:
+                await self.consumer.stop()
+            if producer_started:
+                await self.producer.stop()
             logger.info("Moderation worker stopped")
 
     async def _handle_message(self, payload: bytes) -> None:
@@ -72,32 +87,53 @@ class ModerationWorker:
         item_id = self._extract_item_id(payload)
         if item_id is None:
             logger.warning("Skipping invalid message payload=%s", payload)
+            await self._send_to_dlq(
+                error_message="Invalid message payload",
+                payload=payload,
+            )
             return
 
         logger.info("Processing moderation request item_id=%s", item_id)
 
         try:
             advertisement = await self._load_advertisement(item_id)
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to read advertisement item_id=%s", item_id)
-            await self._mark_failed(item_id, "Database read failed")
+            await self._handle_processing_error(
+                item_id=item_id,
+                error_message=self._compose_error_message("Database read failed", exc),
+                payload=payload,
+            )
             return
 
         if advertisement is None:
-            await self._mark_failed(item_id, "Advertisement not found")
+            await self._handle_processing_error(
+                item_id=item_id,
+                error_message="Advertisement not found",
+                payload=payload,
+            )
             return
 
         try:
             is_violation, probability = self._predict(advertisement)
-        except Exception:
+        except Exception as exc:
             logger.exception("Prediction failed item_id=%s", item_id)
-            await self._mark_failed(item_id, "Prediction failed")
+            await self._handle_processing_error(
+                item_id=item_id,
+                error_message=self._compose_error_message("Prediction failed", exc),
+                payload=payload,
+            )
             return
 
         try:
             task_id = await self._mark_completed(item_id, is_violation, probability)
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to update moderation result item_id=%s", item_id)
+            await self._handle_processing_error(
+                item_id=item_id,
+                error_message=self._compose_error_message("Failed to update moderation result", exc),
+                payload=payload,
+            )
             return
 
         if task_id is None:
@@ -111,6 +147,24 @@ class ModerationWorker:
             is_violation,
             probability,
         )
+
+    async def _handle_processing_error(
+        self,
+        item_id: int,
+        error_message: str,
+        payload: bytes,
+    ) -> None:
+        await self._mark_failed(item_id, error_message)
+        await self._send_to_dlq(error_message, payload)
+
+    @staticmethod
+    def _compose_error_message(base_message: str, exc: Exception | None) -> str:
+        if exc is None:
+            return base_message
+        details = str(exc).strip()
+        if not details:
+            return base_message
+        return f"{base_message}: {details}"
 
     @staticmethod
     def _extract_item_id(payload: Any) -> int | None:
@@ -226,7 +280,7 @@ class ModerationWorker:
             async with get_pg_connection() as connection:
                 async with connection.transaction():
                     row = await connection.fetchrow(query, item_id, error_message[:1000])
-        except pg_exc.PostgresError:
+        except Exception:
             logger.exception("Failed to persist failed status item_id=%s", item_id)
             return None
         if row is None:
@@ -239,6 +293,49 @@ class ModerationWorker:
             error_message,
         )
         return task_id
+
+    async def _send_to_dlq(
+        self,
+        error_message: str,
+        payload: bytes | bytearray | None,
+    ) -> None:
+        """Отправляет сообщение об ошибке в DLQ топик."""
+        original_message: dict[str, Any]
+        retry_count = 1
+        payload_text = ""
+        if isinstance(payload, (bytes, bytearray)):
+            payload_text = payload.decode("utf-8", errors="replace")
+        elif payload is not None:
+            payload_text = str(payload)
+
+        try:
+            parsed_payload = json.loads(payload_text) if payload_text else {}
+        except json.JSONDecodeError:
+            parsed_payload = {"raw_payload": payload_text}
+
+        if isinstance(parsed_payload, dict):
+            original_message = parsed_payload
+            raw_retry_count = parsed_payload.get("retry_count")
+            if isinstance(raw_retry_count, int) and raw_retry_count >= 0:
+                retry_count = raw_retry_count + 1
+        else:
+            original_message = {"raw_payload": payload_text}
+
+        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        message = {
+            "original_message": original_message,
+            "error": error_message,
+            "timestamp": timestamp,
+            "retry_count": retry_count,
+        }
+
+        try:
+            await self.producer.send_and_wait(self.dlq_topic, message)
+        except Exception:
+            logger.exception(
+                "Failed to publish message to DLQ topic=%s",
+                self.dlq_topic,
+            )
 
 
 async def main() -> None:

@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from clients.postgres import get_pg_connection
-from models.moderation_result import ModerationResult
+from app.clients.postgres import get_pg_connection
+from app.models.moderation_result import ModerationResult
 
 
 @dataclass(frozen=True)

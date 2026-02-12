@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from clients.postgres import get_pg_connection
-from models.advertisement import Advertisement
+from app.clients.postgres import get_pg_connection
+from app.models.advertisement import Advertisement
 
 
 @dataclass(frozen=True)

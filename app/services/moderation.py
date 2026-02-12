@@ -1,4 +1,4 @@
-from models.advertisement import Advertisement
+from app.models.advertisement import Advertisement
 
 
 class BusinessLogicError(RuntimeError):

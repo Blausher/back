@@ -2,10 +2,11 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 
 def train_model():
     """Обучает простую модель на синтетических данных."""
+    from sklearn.linear_model import LogisticRegression
+
     np.random.seed(42)
     # Признаки: [is_verified_seller, images_qty, description_length, category]
     X = np.random.rand(1000, 4)

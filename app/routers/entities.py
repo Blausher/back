@@ -3,11 +3,11 @@ import logging
 from asyncpg import exceptions as pg_exc
 from fastapi import APIRouter, HTTPException
 
-from models.advertisement import Advertisement
-from models.advertisement_create import AdvertisementCreate
-from models.user import User
-from repositories.advertisements import AdvertisementRepository
-from repositories.users import UserRepository
+from app.models.advertisement import Advertisement
+from app.models.advertisement_create import AdvertisementCreate
+from app.models.user import User
+from app.repositories.advertisements import AdvertisementRepository
+from app.repositories.users import UserRepository
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

@@ -2,10 +2,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from models.advertisement import Advertisement
-from models.moderation_result import ModerationResult
-from routers import predict as predict_router
-from services import moderation
+from app.models.advertisement import Advertisement
+from app.models.moderation_result import ModerationResult
+from app.routers import predict as predict_router
+from app.services import moderation
 
 client = TestClient(app)
 
