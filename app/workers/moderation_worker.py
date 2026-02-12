@@ -6,11 +6,10 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
+from app.clients.model import ModelClient
 from app.clients.postgres import get_pg_connection
-from app.services.model import load_or_train_model
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ class ModerationWorker:
         self.topic = topic
         self.group_id = group_id or os.getenv("KAFKA_MODERATION_GROUP_ID", "moderation-worker")
         self.dlq_topic = os.getenv("KAFKA_DLQ_TOPIC", dlq_topic)
-        self.model = load_or_train_model(model_path)
+        self.model_client = ModelClient(model_path=model_path)
         self.consumer = AIOKafkaConsumer(
             self.topic,
             bootstrap_servers=self.bootstrap_servers,
@@ -212,16 +211,7 @@ class ModerationWorker:
 
     def _predict(self, advertisement: AdvertisementRow) -> tuple[bool, float]:
         """Считает вероятность нарушения и бинарный итог по порогу 0.5."""
-        features = np.array(
-            [[
-                1.0 if advertisement.is_verified_seller else 0.0,
-                min(advertisement.images_qty, 10) / 10.0,
-                len(advertisement.description) / 1000.0,
-                advertisement.category / 100.0,
-            ]],
-            dtype=float,
-        )
-        probability = float(self.model.predict_proba(features)[0][1])
+        probability = self.model_client.predict_probability(advertisement)
         is_violation = probability >= 0.5
         return is_violation, probability
 

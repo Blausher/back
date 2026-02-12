@@ -2,23 +2,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.clients.model import ModelNotLoadedError
 from app.models.advertisement import Advertisement
 from app.models.moderation_result import ModerationResult
 from app.routers import predict as predict_router
 from app.services import moderation
 
 client = TestClient(app)
-
-
-class DummyModel:
-    '''
-    Заглушка для модели
-    '''
-    def __init__(self, prob: float):
-        self.prob = prob
-
-    def predict_proba(self, features):
-        return [[1.0 - self.prob, self.prob]]
 
 VALID_PAYLOAD = {
     "seller_id": 1,
@@ -35,7 +25,11 @@ def test_predict_positive_valid(monkeypatch):
     '''
     положительный результат предсказания (валидное объявление)
     '''
-    app.state.model = DummyModel(0.87)
+    monkeypatch.setattr(
+        predict_router.prediction.model_client,
+        "predict_probability",
+        lambda _ad: 0.87,
+    )
 
     payload = {**VALID_PAYLOAD, "is_verified_seller": True, "images_qty": 0}
 
@@ -51,7 +45,11 @@ def test_predict_negative_invalid(monkeypatch):
     '''
     отрицательный результат предсказания (невалидное объявление)
     '''
-    app.state.model = DummyModel(0.12)
+    monkeypatch.setattr(
+        predict_router.prediction.model_client,
+        "predict_probability",
+        lambda _ad: 0.12,
+    )
 
     payload = {**VALID_PAYLOAD, "is_verified_seller": False, "images_qty": 0}
 
@@ -111,7 +109,11 @@ def test_predict_validation_error_on_missing_field(missing_field):
 
 def test_predict_business_logic_error(monkeypatch):
     """Проверяет ошибку бизнес-логики."""
-    app.state.model = DummyModel(0.33)
+    monkeypatch.setattr(
+        predict_router.prediction.model_client,
+        "predict_probability",
+        lambda _ad: 0.33,
+    )
 
     def raise_error(_):
         raise moderation.BusinessLogicError("boom")
@@ -124,9 +126,16 @@ def test_predict_business_logic_error(monkeypatch):
     assert response.json()["detail"] == "Business logic prediction failed"
 
 
-def test_predict_model_unavailable():
+def test_predict_model_unavailable(monkeypatch):
     """Проверяет ответ при отсутствии модели."""
-    app.state.model = None
+    def raise_not_loaded(_ad):
+        raise ModelNotLoadedError("Model is not loaded")
+
+    monkeypatch.setattr(
+        predict_router.prediction.model_client,
+        "predict_probability",
+        raise_not_loaded,
+    )
 
     response = client.post("/predict", json=VALID_PAYLOAD)
 
@@ -136,7 +145,11 @@ def test_predict_model_unavailable():
 
 def test_simple_predict_success(monkeypatch):
     """Проверяет успешный simple_predict."""
-    app.state.model = DummyModel(0.87)
+    monkeypatch.setattr(
+        predict_router.prediction.model_client,
+        "predict_probability",
+        lambda _ad: 0.87,
+    )
     monkeypatch.setattr(moderation, "predict_has_violations", lambda _: True)
 
     class DummyRepo:
@@ -155,8 +168,6 @@ def test_simple_predict_success(monkeypatch):
 
 def test_simple_predict_not_found(monkeypatch):
     """Проверяет 404 при отсутствии объявления."""
-    app.state.model = DummyModel(0.42)
-
     class DummyRepo:
         async def select_advert(self, _item_id):
             return None

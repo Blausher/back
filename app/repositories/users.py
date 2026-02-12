@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from asyncpg import exceptions as pg_exc
+
 from app.clients.postgres import get_pg_connection
+from app.errors import StorageUnavailableError, UserAlreadyExistsError
 from app.models.user import User
 
 
@@ -13,8 +16,13 @@ class UserStorage:
             VALUES ($1, $2)
             RETURNING *
         """
-        async with get_pg_connection() as connection:
-            record = await connection.fetchrow(query, user_id, is_verified_seller)
+        try:
+            async with get_pg_connection() as connection:
+                record = await connection.fetchrow(query, user_id, is_verified_seller)
+        except pg_exc.UniqueViolationError as exc:
+            raise UserAlreadyExistsError("User already exists") from exc
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
 
         return dict(record)
 

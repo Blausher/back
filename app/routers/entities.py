@@ -1,8 +1,13 @@
 import logging
 
-from asyncpg import exceptions as pg_exc
 from fastapi import APIRouter, HTTPException
 
+from app.errors import (
+    AdvertisementAlreadyExistsError,
+    SellerNotFoundError,
+    StorageUnavailableError,
+    UserAlreadyExistsError,
+)
 from app.models.advertisement import Advertisement
 from app.models.advertisement_create import AdvertisementCreate
 from app.models.user import User
@@ -22,11 +27,11 @@ async def create_user(user: User) -> User:
             user_id=user.id,
             is_verified_seller=user.is_verified_seller,
         )
-    except pg_exc.UniqueViolationError as exc:
+    except UserAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail="User already exists") from exc
-    except Exception as exc:
+    except StorageUnavailableError as exc:
         logger.exception("Create user failed")
-        raise HTTPException(status_code=503, detail="Database is not available") from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @router.post("/advertisements", response_model=Advertisement)
@@ -40,10 +45,10 @@ async def create_advertisement(advertisement: AdvertisementCreate) -> Advertisem
             category=advertisement.category,
             images_qty=advertisement.images_qty,
         )
-    except pg_exc.ForeignKeyViolationError as exc:
+    except SellerNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Seller not found") from exc
-    except pg_exc.UniqueViolationError as exc:
+    except AdvertisementAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail="Advertisement already exists") from exc
-    except Exception as exc:
+    except StorageUnavailableError as exc:
         logger.exception("Create advertisement failed")
-        raise HTTPException(status_code=503, detail="Database is not available") from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc

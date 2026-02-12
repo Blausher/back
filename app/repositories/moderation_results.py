@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from app.clients.postgres import get_pg_connection
+from app.errors import StorageUnavailableError
 from app.models.moderation_result import ModerationResult
 
 
@@ -13,8 +14,11 @@ class ModerationResultStorage:
             VALUES ($1, $2)
             RETURNING id, item_id, status, is_violation, probability, error_message, created_at, processed_at
         """
-        async with get_pg_connection() as connection:
-            record = await connection.fetchrow(query, item_id, status)
+        try:
+            async with get_pg_connection() as connection:
+                record = await connection.fetchrow(query, item_id, status)
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
         return dict(record)
 
     async def get_by_id(self, moderation_result_id: int) -> Mapping[str, Any] | None:
@@ -23,8 +27,11 @@ class ModerationResultStorage:
             FROM moderation_results
             WHERE id = $1
         """
-        async with get_pg_connection() as connection:
-            record = await connection.fetchrow(query, moderation_result_id)
+        try:
+            async with get_pg_connection() as connection:
+                record = await connection.fetchrow(query, moderation_result_id)
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
         if record is None:
             return None
         return dict(record)

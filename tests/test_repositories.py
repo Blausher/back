@@ -1,6 +1,8 @@
-import asyncio
 from contextlib import asynccontextmanager
 
+import pytest
+
+from app.errors import SellerNotFoundError
 from app.models.advertisement import Advertisement
 from app.models.user import User
 from app.repositories import advertisements as ads_repo
@@ -32,63 +34,95 @@ class DummyConnection:
         return self.row
 
 
-def test_user_repository_create(monkeypatch):
+class SequencedConnection(DummyConnection):
+    def __init__(self, rows):
+        super().__init__(row=None)
+        self.rows = list(rows)
+
+    async def fetchrow(self, query, *args):
+        self.fetched.append((query, args))
+        if not self.rows:
+            return None
+        return self.rows.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_user_repository_create(monkeypatch):
     """Создает пользователя через репозиторий и возвращает модель."""
-    async def run():
-        expected = {"id": 7, "is_verified_seller": True}
-        connection = DummyConnection(expected)
+    expected = {"id": 7, "is_verified_seller": True}
+    connection = DummyConnection(expected)
 
-        @asynccontextmanager
-        async def conn_stub():
-            yield connection
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
 
-        monkeypatch.setattr(users_repo, "get_pg_connection", conn_stub)
+    monkeypatch.setattr(users_repo, "get_pg_connection", conn_stub)
 
-        repo = users_repo.UserRepository()
-        user = await repo.create(user_id=7, is_verified_seller=True)
+    repo = users_repo.UserRepository()
+    user = await repo.create(user_id=7, is_verified_seller=True)
 
-        assert isinstance(user, User)
-        assert user.id == 7
-        assert user.is_verified_seller is True
-
-    asyncio.run(run())
+    assert isinstance(user, User)
+    assert user.id == 7
+    assert user.is_verified_seller is True
 
 
-def test_advertisement_repository_create(monkeypatch):
+@pytest.mark.asyncio
+async def test_advertisement_repository_create(monkeypatch):
     """Создает объявление через репозиторий и возвращает модель."""
-    async def run():
-        expected = {
-            "seller_id": 7,
-            "is_verified_seller": True,
-            "item_id": 10,
-            "name": "Desk",
-            "description": "Wooden desk",
-            "category": 2,
-            "images_qty": 1,
-        }
-        connection = DummyConnection(expected)
+    expected = {
+        "seller_id": 7,
+        "is_verified_seller": True,
+        "item_id": 10,
+        "name": "Desk",
+        "description": "Wooden desk",
+        "category": 2,
+        "images_qty": 1,
+    }
+    connection = DummyConnection(expected)
 
-        @asynccontextmanager
-        async def conn_stub():
-            yield connection
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
 
-        monkeypatch.setattr(ads_repo, "get_pg_connection", conn_stub)
+    monkeypatch.setattr(ads_repo, "get_pg_connection", conn_stub)
 
-        repo = ads_repo.AdvertisementRepository()
-        ad = await repo.create(
-            seller_id=expected["seller_id"],
-            item_id=expected["item_id"],
-            name=expected["name"],
-            description=expected["description"],
-            category=expected["category"],
-            images_qty=expected["images_qty"],
+    repo = ads_repo.AdvertisementRepository()
+    ad = await repo.create(
+        seller_id=expected["seller_id"],
+        item_id=expected["item_id"],
+        name=expected["name"],
+        description=expected["description"],
+        category=expected["category"],
+        images_qty=expected["images_qty"],
+    )
+
+    assert isinstance(ad, Advertisement)
+    assert ad.item_id == expected["item_id"]
+    assert ad.seller_id == expected["seller_id"]
+    assert ad.is_verified_seller is True
+
+    assert connection.fetched
+
+
+@pytest.mark.asyncio
+async def test_advertisement_repository_create_raises_when_seller_missing(monkeypatch):
+    """Возвращает доменную ошибку, если продавец не найден до INSERT."""
+    connection = SequencedConnection(rows=[None])
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(ads_repo, "get_pg_connection", conn_stub)
+
+    repo = ads_repo.AdvertisementRepository()
+
+    with pytest.raises(SellerNotFoundError):
+        await repo.create(
+            seller_id=999,
+            item_id=10,
+            name="Desk",
+            description="Wooden desk",
+            category=2,
+            images_qty=1,
         )
-
-        assert isinstance(ad, Advertisement)
-        assert ad.item_id == expected["item_id"]
-        assert ad.seller_id == expected["seller_id"]
-        assert ad.is_verified_seller is True
-
-        assert connection.fetched
-
-    asyncio.run(run())

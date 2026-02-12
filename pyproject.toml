@@ -12,6 +12,7 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "pydantic>=2.12.5",
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
     "scikit-learn>=1.8.0",
     "yandex-pgmigrate>=1.0.10",
 ]

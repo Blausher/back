@@ -1,7 +1,14 @@
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from asyncpg import exceptions as pg_exc
+
 from app.clients.postgres import get_pg_connection
+from app.errors import (
+    AdvertisementAlreadyExistsError,
+    SellerNotFoundError,
+    StorageUnavailableError,
+)
 from app.models.advertisement import Advertisement
 
 
@@ -21,8 +28,11 @@ class AdvertisementStorage:
             JOIN users AS u ON u.id = a.seller_id
             WHERE a.item_id = $1
         """
-        async with get_pg_connection() as connection:
-            record = await connection.fetchrow(query, item_id)
+        try:
+            async with get_pg_connection() as connection:
+                record = await connection.fetchrow(query, item_id)
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
         if record is None:
             return None
         return dict(record)
@@ -41,17 +51,32 @@ class AdvertisementStorage:
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING item_id, seller_id, name, description, category, images_qty
         """
+        seller_exists_query = """
+            SELECT id
+            FROM users
+            WHERE id = $1
+        """
 
-        async with get_pg_connection() as connection:
-            record = await connection.fetchrow(
-                insert_query,
-                item_id,
-                seller_id,
-                name,
-                description,
-                category,
-                images_qty,
-            )
+        try:
+            async with get_pg_connection() as connection:
+                seller_row = await connection.fetchrow(seller_exists_query, seller_id)
+                if seller_row is None:
+                    raise SellerNotFoundError("Seller not found")
+                record = await connection.fetchrow(
+                    insert_query,
+                    item_id,
+                    seller_id,
+                    name,
+                    description,
+                    category,
+                    images_qty,
+                )
+        except SellerNotFoundError:
+            raise
+        except pg_exc.UniqueViolationError as exc:
+            raise AdvertisementAlreadyExistsError("Advertisement already exists") from exc
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
 
         return dict(record)
                
@@ -85,5 +110,5 @@ class AdvertisementRepository:
         )
         raw_ad = await self.advertisement_storage.select_advert(item_id)
         if raw_ad is None:
-            raise RuntimeError("Failed to fetch created advertisement")
+            raise StorageUnavailableError("Storage operation failed")
         return Advertisement.model_validate(raw_ad)
