@@ -51,7 +51,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: python app/main.py
+    command: python -m app.main
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432

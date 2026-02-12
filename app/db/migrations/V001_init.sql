@@ -26,3 +26,11 @@ CREATE TABLE moderation_results (
     processed_at TIMESTAMP,
     CHECK (item_id >= 0)
 );
+
+
+CREATE TABLE IF NOT EXISTS processed_events (
+    event_id TEXT PRIMARY KEY,
+    item_id INTEGER NOT NULL CHECK (item_id >= 0),
+    moderation_result_id INTEGER NOT NULL UNIQUE REFERENCES moderation_results(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);

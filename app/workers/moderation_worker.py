@@ -25,6 +25,26 @@ class AdvertisementRow:
     images_qty: int
 
 
+async def ensure_idempotency(
+    conn,
+    event_id: str,
+    item_id: int,
+    moderation_result_id: int,
+) -> bool:
+    """Пишет event в processed_events; возвращает True только для первого события."""
+    result = await conn.execute(
+        """
+        INSERT INTO processed_events (event_id, item_id, moderation_result_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING
+        """,
+        event_id,
+        item_id,
+        moderation_result_id,
+    )
+    return not result.endswith("0")
+
+
 class ModerationWorker:
     """Kafka consumer, который обрабатывает задачи модерации объявлений."""
 
@@ -93,6 +113,42 @@ class ModerationWorker:
             return
 
         logger.info("Processing moderation request item_id=%s", item_id)
+
+        try:
+            pending_task_id = await self._get_pending_task_id(item_id)
+        except Exception as exc:
+            logger.exception("Failed to read pending moderation task item_id=%s", item_id)
+            await self._handle_processing_error(
+                item_id=item_id,
+                error_message=self._compose_error_message("Pending task lookup failed", exc),
+                payload=payload,
+            )
+            return
+
+        if pending_task_id is None:
+            logger.warning("No pending moderation task for item_id=%s", item_id)
+            return
+
+        event_id = f"moderation:{item_id}:{pending_task_id}"
+        try:
+            first_time = await self._ensure_idempotency(event_id, item_id, pending_task_id)
+        except Exception as exc:
+            logger.exception("Failed to persist idempotency key item_id=%s event_id=%s", item_id, event_id)
+            await self._handle_processing_error(
+                item_id=item_id,
+                error_message=self._compose_error_message("Idempotency persistence failed", exc),
+                payload=payload,
+            )
+            return
+
+        if not first_time:
+            logger.info(
+                "Duplicate moderation event skipped item_id=%s task_id=%s event_id=%s",
+                item_id,
+                pending_task_id,
+                event_id,
+            )
+            return
 
         try:
             advertisement = await self._load_advertisement(item_id)
@@ -164,6 +220,38 @@ class ModerationWorker:
         if not details:
             return base_message
         return f"{base_message}: {details}"
+
+    async def _get_pending_task_id(self, item_id: int) -> int | None:
+        """Возвращает id старейшей pending-задачи по item_id."""
+        query = """
+            SELECT id
+            FROM moderation_results
+            WHERE item_id = $1
+              AND status = 'pending'
+            ORDER BY id ASC
+            LIMIT 1
+        """
+        async with get_pg_connection() as connection:
+            row = await connection.fetchrow(query, item_id)
+        if row is None:
+            return None
+        return int(row["id"])
+
+    async def _ensure_idempotency(
+        self,
+        event_id: str,
+        item_id: int,
+        moderation_result_id: int,
+    ) -> bool:
+        """Регистрирует обработку события, защищая от повторной обработки дублей."""
+        async with get_pg_connection() as connection:
+            async with connection.transaction():
+                return await ensure_idempotency(
+                    connection,
+                    event_id=event_id,
+                    item_id=item_id,
+                    moderation_result_id=moderation_result_id,
+                )
 
     @staticmethod
     def _extract_item_id(payload: Any) -> int | None:

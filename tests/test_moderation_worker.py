@@ -55,10 +55,22 @@ def _build_worker(monkeypatch):
     return mw.ModerationWorker()
 
 
+def _mock_pending_and_idempotency(worker):
+    async def fake_get_pending_task_id(_item_id):
+        return 10
+
+    async def fake_ensure_idempotency(_event_id, _item_id, _moderation_result_id):
+        return True
+
+    worker._get_pending_task_id = fake_get_pending_task_id
+    worker._ensure_idempotency = fake_ensure_idempotency
+
+
 @pytest.mark.asyncio
 async def test_handle_message_marks_failed_and_sends_dlq_when_advert_not_found(monkeypatch):
     """Проверяет, что отсутствие объявления приводит к failed и отправке в DLQ."""
     worker = _build_worker(monkeypatch)
+    _mock_pending_and_idempotency(worker)
     failed_updates = []
     dlq_events = []
 
@@ -87,6 +99,7 @@ async def test_handle_message_marks_failed_and_sends_dlq_when_advert_not_found(m
 async def test_handle_message_marks_failed_and_sends_dlq_when_predict_fails(monkeypatch):
     """Проверяет, что ошибка предсказания помечает задачу как failed и пишет в DLQ."""
     worker = _build_worker(monkeypatch)
+    _mock_pending_and_idempotency(worker)
     failed_updates = []
     dlq_events = []
 
@@ -128,6 +141,7 @@ async def test_handle_message_marks_failed_and_sends_dlq_when_predict_fails(monk
 async def test_handle_message_success_marks_completed_without_dlq(monkeypatch):
     """Проверяет happy path: completed без failed-обновления и без DLQ."""
     worker = _build_worker(monkeypatch)
+    _mock_pending_and_idempotency(worker)
     completed_updates = []
     failed_updates = []
     dlq_events = []
@@ -202,3 +216,42 @@ async def test_send_to_dlq_increments_retry_count(monkeypatch):
 
     _, message = worker.producer.sent[0]
     assert message["retry_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_handle_message_skips_duplicate_event(monkeypatch):
+    """Проверяет, что дубль события не обрабатывается повторно."""
+    worker = _build_worker(monkeypatch)
+    completed_updates = []
+    failed_updates = []
+    dlq_events = []
+
+    async def fake_get_pending_task_id(_item_id):
+        return 10
+
+    async def fake_ensure_idempotency(_event_id, _item_id, _moderation_result_id):
+        return False
+
+    async def fake_mark_completed(item_id, is_violation, probability):
+        completed_updates.append((item_id, is_violation, probability))
+        return 55
+
+    async def fake_mark_failed(item_id, error_message):
+        failed_updates.append((item_id, error_message))
+        return 1
+
+    async def fake_send_to_dlq(error_message, payload):
+        dlq_events.append((error_message, payload))
+
+    worker._get_pending_task_id = fake_get_pending_task_id
+    worker._ensure_idempotency = fake_ensure_idempotency
+    worker._mark_completed = fake_mark_completed
+    worker._mark_failed = fake_mark_failed
+    worker._send_to_dlq = fake_send_to_dlq
+
+    payload = b'{"item_id": 42}'
+    await worker._handle_message(payload)
+
+    assert completed_updates == []
+    assert failed_updates == []
+    assert dlq_events == []
