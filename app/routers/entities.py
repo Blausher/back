@@ -29,6 +29,9 @@ moderation_result_cache_storage = ModerationResultRedisStorage()
 
 @router.post("/users", response_model=User)
 async def create_user(user: User) -> User:
+    '''
+    Ручка для создания юзера
+    '''
     try:
         return await user_repo.create(
             user_id=user.id,
@@ -43,6 +46,9 @@ async def create_user(user: User) -> User:
 
 @router.post("/advertisements", response_model=Advertisement)
 async def create_advertisement(advertisement: AdvertisementCreate) -> Advertisement:
+    '''
+    Ручка для создания объявления
+    '''
     try:
         return await advertisement_repo.create(
             seller_id=advertisement.seller_id,
@@ -63,6 +69,9 @@ async def create_advertisement(advertisement: AdvertisementCreate) -> Advertisem
 
 @router.post("/close")
 async def close_advertisement(payload: CloseAdvertisementRequest) -> dict:
+    '''
+    Ручка для закрытия объявления
+    '''
     try:
         close_result = await advertisement_repo.close(payload.item_id)
     except StorageUnavailableError as exc:

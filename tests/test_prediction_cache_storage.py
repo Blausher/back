@@ -15,6 +15,7 @@ from app.repositories.prediction_cache import (
 
 @pytest.mark.asyncio
 async def test_prediction_storage_set_uses_pipeline_and_expected_args(monkeypatch):
+    """Проверяет запись prediction-кэша через pipeline с корректными аргументами."""
     pipeline = MagicMock()
     pipeline.set = MagicMock(return_value=pipeline)
     pipeline.expire = MagicMock(return_value=pipeline)
@@ -45,6 +46,7 @@ async def test_prediction_storage_set_uses_pipeline_and_expected_args(monkeypatc
 
 @pytest.mark.asyncio
 async def test_prediction_storage_get_and_delete_use_expected_keys(monkeypatch):
+    """Проверяет чтение и удаление prediction-кэша по ожидаемому ключу."""
     connection = MagicMock()
     connection.get = AsyncMock(return_value='{"is_valid": false, "probability": 0.12}')
     connection.delete = AsyncMock()
@@ -67,6 +69,7 @@ async def test_prediction_storage_get_and_delete_use_expected_keys(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_moderation_storage_set_uses_pending_ttl(monkeypatch):
+    """Проверяет TTL для pending moderation result при сохранении в кэш."""
     pipeline = MagicMock()
     pipeline.set = MagicMock(return_value=pipeline)
     pipeline.expire = MagicMock(return_value=pipeline)
@@ -91,6 +94,7 @@ async def test_moderation_storage_set_uses_pending_ttl(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_moderation_storage_set_uses_terminal_ttl(monkeypatch):
+    """Проверяет TTL для terminal moderation result при сохранении в кэш."""
     pipeline = MagicMock()
     pipeline.set = MagicMock(return_value=pipeline)
     pipeline.expire = MagicMock(return_value=pipeline)
@@ -114,6 +118,7 @@ async def test_moderation_storage_set_uses_terminal_ttl(monkeypatch):
 
 
 async def _require_live_redis() -> None:
+    """Проверяет доступность Redis или пропускает integration-тест."""
     try:
         async with get_redis_connection() as connection:
             await connection.ping()
@@ -122,7 +127,9 @@ async def _require_live_redis() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_prediction_storage_integration_set_get_delete():
+    """Интеграционно проверяет set/get/delete и TTL для prediction-кэша."""
     await _require_live_redis()
     storage = PredictionRedisStorage()
     row_id = int(time.time() * 1000)
@@ -144,7 +151,9 @@ async def test_prediction_storage_integration_set_get_delete():
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_moderation_storage_integration_pending_and_terminal_ttl():
+    """Интеграционно проверяет кэш moderation result и смену TTL по статусу."""
     await _require_live_redis()
     storage = ModerationResultRedisStorage()
     row_id = int(time.time() * 1000)

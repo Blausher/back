@@ -32,6 +32,16 @@ docker compose down -v
 python -m pytest -v
 ```
 
+Только интеграционные:
+```bash
+python -m pytest -m integration
+```
+
+Только юнит:
+```bash
+python -m pytest -m "not integration"
+```
+
 
 ## Описание проекта
 
@@ -110,5 +120,4 @@ Dockerfile
 docker compose exec -T redis redis-cli DBSIZE
 docker compose exec -T redis redis-cli --scan
 ```
-
 
