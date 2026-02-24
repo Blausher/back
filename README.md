@@ -83,6 +83,7 @@ erDiagram
 | `GET` | `/` | health/check, возвращает `{"message":"Hello World"}` |
 | `POST` | `/users` | создать пользователя |
 | `POST` | `/advertisements` | создать объявление |
+| `POST` | `/close` | закрыть объявление по `item_id` (удаляет объявление, результаты модерации и кэш) |
 | `POST` | `/predict` | синхронный скоринг по полному payload объявления |
 | `GET` | `/simple_predict?item_id=...` | синхронный скоринг по `item_id` |
 | `POST` | `/async_predict` | создать асинхронную задачу модерации |
@@ -102,3 +103,12 @@ app/
 docker-compose.yml
 Dockerfile
 ```
+
+
+Проверка кеша редиса
+```bash
+docker compose exec -T redis redis-cli DBSIZE
+docker compose exec -T redis redis-cli --scan
+```
+
+

@@ -79,7 +79,43 @@ class AdvertisementStorage:
             raise StorageUnavailableError("Storage operation failed") from exc
 
         return dict(record)
-               
+
+    async def close(self, item_id: int) -> Mapping[str, Any] | None:
+        query = """
+            WITH deleted_results AS (
+                DELETE FROM moderation_results
+                WHERE item_id = $1
+                RETURNING id
+            ),
+            deleted_advertisement AS (
+                DELETE FROM advertisements
+                WHERE item_id = $1
+                RETURNING item_id
+            )
+            SELECT
+                deleted_advertisement.item_id AS item_id,
+                COALESCE(
+                    (SELECT array_agg(id ORDER BY id) FROM deleted_results),
+                    ARRAY[]::INTEGER[]
+                ) AS moderation_result_ids
+            FROM deleted_advertisement
+        """
+        try:
+            async with get_pg_connection() as connection:
+                async with connection.transaction():
+                    record = await connection.fetchrow(query, item_id)
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
+        if record is None:
+            return None
+        return dict(record)
+
+
+@dataclass(frozen=True)
+class AdvertisementCloseResult:
+    item_id: int
+    moderation_result_ids: list[int]
+
 
 @dataclass(frozen=True)
 class AdvertisementRepository:
@@ -112,3 +148,13 @@ class AdvertisementRepository:
         if raw_ad is None:
             raise StorageUnavailableError("Storage operation failed")
         return Advertisement.model_validate(raw_ad)
+
+    async def close(self, item_id: int) -> AdvertisementCloseResult | None:
+        raw_result = await self.advertisement_storage.close(item_id)
+        if raw_result is None:
+            return None
+        moderation_result_ids = [int(value) for value in raw_result["moderation_result_ids"]]
+        return AdvertisementCloseResult(
+            item_id=int(raw_result["item_id"]),
+            moderation_result_ids=moderation_result_ids,
+        )

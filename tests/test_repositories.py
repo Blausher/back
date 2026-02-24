@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from app.errors import SellerNotFoundError
+from app.errors import SellerNotFoundError, StorageUnavailableError
 from app.models.advertisement import Advertisement
 from app.models.moderation_result import ModerationResult
 from app.models.user import User
@@ -204,3 +204,59 @@ async def test_moderation_result_create_pending_returns_existing_completed(monke
     assert result.status == "completed"
     assert len(connection.fetched) == 1
     assert "SELECT id, item_id, status" in connection.fetched[0][0]
+
+
+@pytest.mark.asyncio
+async def test_advertisement_repository_close_success(monkeypatch):
+    expected = {
+        "item_id": 10,
+        "moderation_result_ids": [501, 502],
+    }
+    connection = DummyConnection(expected)
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(ads_repo, "get_pg_connection", conn_stub)
+
+    repo = ads_repo.AdvertisementRepository()
+    result = await repo.close(item_id=10)
+
+    assert result is not None
+    assert result.item_id == 10
+    assert result.moderation_result_ids == [501, 502]
+    assert len(connection.fetched) == 1
+    assert "DELETE FROM moderation_results" in connection.fetched[0][0]
+    assert "DELETE FROM advertisements" in connection.fetched[0][0]
+
+
+@pytest.mark.asyncio
+async def test_advertisement_repository_close_not_found(monkeypatch):
+    connection = DummyConnection(None)
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(ads_repo, "get_pg_connection", conn_stub)
+
+    repo = ads_repo.AdvertisementRepository()
+    result = await repo.close(item_id=404)
+
+    assert result is None
+    assert len(connection.fetched) == 1
+
+
+@pytest.mark.asyncio
+async def test_advertisement_repository_close_raises_storage_unavailable(monkeypatch):
+    @asynccontextmanager
+    async def conn_stub():
+        raise RuntimeError("db unavailable")
+        yield
+
+    monkeypatch.setattr(ads_repo, "get_pg_connection", conn_stub)
+
+    repo = ads_repo.AdvertisementRepository()
+    with pytest.raises(StorageUnavailableError):
+        await repo.close(item_id=10)

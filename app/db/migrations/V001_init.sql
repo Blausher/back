@@ -38,3 +38,7 @@ CREATE TABLE IF NOT EXISTS processed_events (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_moderation_results_pending_item_id
     ON moderation_results(item_id)
     WHERE status = 'pending';
+
+
+ALTER TABLE advertisements
+ADD COLUMN is_closed BOOLEAN NOT NULL DEFAULT FALSE;
