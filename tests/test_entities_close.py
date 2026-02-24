@@ -9,6 +9,7 @@ from app.routers import entities as entities_router
 
 @pytest.mark.asyncio
 async def test_close_advertisement_success(monkeypatch):
+    """Успешно закрывает объявление и очищает связанные ключи в Redis."""
     prediction_deleted = []
     moderation_deleted = []
 
@@ -41,6 +42,7 @@ async def test_close_advertisement_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_close_advertisement_not_found(monkeypatch):
+    """Возвращает 404, если объявление для закрытия не найдено."""
     class DummyRepo:
         async def close(self, _item_id):
             return None
@@ -66,6 +68,7 @@ async def test_close_advertisement_not_found(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_close_advertisement_storage_unavailable(monkeypatch):
+    """Возвращает 500 при ошибке PostgreSQL в репозитории."""
     class DummyRepo:
         async def close(self, _item_id):
             raise StorageUnavailableError("Storage operation failed")
@@ -81,6 +84,7 @@ async def test_close_advertisement_storage_unavailable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_close_advertisement_redis_failures_are_best_effort(monkeypatch):
+    """Не падает, если Redis недоступен после успешного удаления в БД."""
     prediction_attempts = []
     moderation_attempts = []
 
