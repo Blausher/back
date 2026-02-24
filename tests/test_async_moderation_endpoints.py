@@ -5,6 +5,26 @@ from app.models.moderation_result import ModerationResult
 from app.routers import predict as predict_router
 
 
+@pytest.fixture(autouse=True)
+def cache_storage_stub(monkeypatch):
+    class DummyPredictionCache:
+        async def get(self, _item_id):
+            return None
+
+        async def set(self, _item_id, _row):
+            return None
+
+    class DummyModerationCache:
+        async def get(self, _task_id):
+            return None
+
+        async def set(self, _task_id, _row):
+            return None
+
+    monkeypatch.setattr(predict_router, "prediction_cache_storage", DummyPredictionCache())
+    monkeypatch.setattr(predict_router, "moderation_result_cache_storage", DummyModerationCache())
+
+
 @pytest.mark.asyncio
 async def test_async_predict_creates_task_and_sends_kafka(monkeypatch):
     """Проверяет создание pending-задачи и отправку сообщения в Kafka."""

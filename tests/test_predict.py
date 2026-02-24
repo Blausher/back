@@ -21,6 +21,26 @@ VALID_PAYLOAD = {
 }
 
 
+@pytest.fixture(autouse=True)
+def cache_storage_stub(monkeypatch):
+    class DummyPredictionCache:
+        async def get(self, _item_id):
+            return None
+
+        async def set(self, _item_id, _row):
+            return None
+
+    class DummyModerationCache:
+        async def get(self, _task_id):
+            return None
+
+        async def set(self, _task_id, _row):
+            return None
+
+    monkeypatch.setattr(predict_router, "prediction_cache_storage", DummyPredictionCache())
+    monkeypatch.setattr(predict_router, "moderation_result_cache_storage", DummyModerationCache())
+
+
 def test_predict_positive_valid(monkeypatch):
     '''
     положительный результат предсказания (валидное объявление)
@@ -180,6 +200,65 @@ def test_simple_predict_not_found(monkeypatch):
     assert response.json()["detail"] == "Advertisement not found"
 
 
+def test_simple_predict_returns_from_cache_without_db_and_model(monkeypatch):
+    class DummyCache:
+        async def get(self, _item_id):
+            return {"is_valid": True, "probability": 0.99}
+
+        async def set(self, _item_id, _row):
+            raise AssertionError("set should not be called on cache hit")
+
+    class DummyRepo:
+        async def select_advert(self, _item_id):
+            raise AssertionError("DB should not be called on cache hit")
+
+    def fail_model(_ad):
+        raise AssertionError("Model should not be called")
+
+    monkeypatch.setattr(predict_router, "prediction_cache_storage", DummyCache())
+    monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
+    monkeypatch.setattr(
+        predict_router.prediction.model_client,
+        "predict_probability",
+        fail_model,
+    )
+
+    response = client.get("/simple_predict", params={"item_id": 42})
+
+    assert response.status_code == 200
+    assert response.json() == {"is_valid": True, "probability": 0.99}
+
+
+def test_simple_predict_cache_miss_saves_result(monkeypatch):
+    cache_set_calls = []
+
+    class DummyCache:
+        async def get(self, _item_id):
+            return None
+
+        async def set(self, item_id, row):
+            cache_set_calls.append((item_id, row))
+
+    class DummyRepo:
+        async def select_advert(self, _item_id):
+            return Advertisement.model_validate(VALID_PAYLOAD)
+
+    monkeypatch.setattr(predict_router, "prediction_cache_storage", DummyCache())
+    monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
+    monkeypatch.setattr(
+        predict_router.prediction.model_client,
+        "predict_probability",
+        lambda _ad: 0.77,
+    )
+    monkeypatch.setattr(moderation, "predict_has_violations", lambda _ad: False)
+
+    response = client.get("/simple_predict", params={"item_id": 42})
+
+    assert response.status_code == 200
+    assert response.json() == {"is_valid": False, "probability": 0.77}
+    assert cache_set_calls == [(42, {"is_valid": False, "probability": 0.77})]
+
+
 def test_moderation_result_pending(monkeypatch):
     class DummyRepo:
         async def get_by_id(self, _task_id):
@@ -249,3 +328,84 @@ def test_moderation_result_not_found(monkeypatch):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Moderation task not found"
+
+
+def test_moderation_result_returns_from_cache_without_db(monkeypatch):
+    class DummyCache:
+        async def get(self, _task_id):
+            return {
+                "task_id": 777,
+                "status": "completed",
+                "is_violation": True,
+                "probability": 0.88,
+            }
+
+        async def set(self, _task_id, _row):
+            raise AssertionError("set should not be called on cache hit")
+
+    class DummyRepo:
+        async def get_by_id(self, _task_id):
+            raise AssertionError("DB should not be called on cache hit")
+
+    monkeypatch.setattr(predict_router, "moderation_result_cache_storage", DummyCache())
+    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+
+    response = client.get("/moderation_result/777")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "task_id": 777,
+        "status": "completed",
+        "is_violation": True,
+        "probability": 0.88,
+    }
+
+
+def test_moderation_result_cache_miss_saves_result(monkeypatch):
+    cache_set_calls = []
+
+    class DummyCache:
+        async def get(self, _task_id):
+            return None
+
+        async def set(self, task_id, row):
+            cache_set_calls.append((task_id, row))
+
+    class DummyRepo:
+        async def get_by_id(self, _task_id):
+            return ModerationResult.model_validate(
+                {
+                    "id": 778,
+                    "item_id": 42,
+                    "status": "failed",
+                    "is_violation": None,
+                    "probability": None,
+                    "error_message": "Advertisement not found",
+                    "created_at": None,
+                    "processed_at": None,
+                }
+            )
+
+    monkeypatch.setattr(predict_router, "moderation_result_cache_storage", DummyCache())
+    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+
+    response = client.get("/moderation_result/778")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "task_id": 778,
+        "status": "failed",
+        "is_violation": None,
+        "probability": None,
+    }
+    assert cache_set_calls == [
+        (
+            778,
+            {
+                "task_id": 778,
+                "status": "failed",
+                "is_violation": None,
+                "probability": None,
+            },
+        )
+    ]

@@ -6,3 +6,4 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 scikit-learn>=1.8.0
 aiokafka>=0.13.0
+redis>=7.2.0

@@ -12,6 +12,7 @@ docker compose up -d --build
 - Redpanda Console: `http://localhost:8080`
 - PostgreSQL: `localhost:15432`
 - Kafka bootstrap: `localhost:9092`
+- Redis: `localhost:6379`
 
 Остановить:
 ```bash
