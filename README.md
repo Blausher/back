@@ -13,6 +13,8 @@ docker compose up -d --build
 - PostgreSQL: `localhost:15432`
 - Kafka bootstrap: `localhost:9092`
 - Redis: `localhost:6379`
+- Prometheus: `http://localhost:9090/`
+- Grafana: `http://localhost:3000/`
 
 Остановить:
 ```bash

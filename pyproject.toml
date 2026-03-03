@@ -9,6 +9,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi[standard]>=0.128.0",
     "numpy>=2.4.1",
+    "prometheus-client>=0.24.1",
     "psycopg2-binary>=2.9.11",
     "pydantic>=2.12.5",
     "pytest>=8.0.0",
