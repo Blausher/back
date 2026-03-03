@@ -121,9 +121,15 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     ports:
       - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./app/observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./app/observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./app/observability/grafana/provisioning/dashboards/json:/etc/grafana/provisioning/dashboards/json:ro
     depends_on:
       - prometheus
 
 volumes:
   pgdata:
   redisdata:
+  grafana_data:
