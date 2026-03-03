@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Mapping
 
 from asyncpg import exceptions as pg_exc
@@ -6,6 +7,7 @@ from asyncpg import exceptions as pg_exc
 from app.clients.postgres import get_pg_connection
 from app.errors import StorageUnavailableError, UserAlreadyExistsError
 from app.models.user import User
+from app.observability.metrics import DB_QUERY_DURATION
 
 
 @dataclass(frozen=True)
@@ -18,7 +20,11 @@ class UserStorage:
         """
         try:
             async with get_pg_connection() as connection:
-                record = await connection.fetchrow(query, user_id, is_verified_seller)
+                started_at = perf_counter()
+                try:
+                    record = await connection.fetchrow(query, user_id, is_verified_seller)
+                finally:
+                    DB_QUERY_DURATION.labels(query_type="insert").observe(perf_counter() - started_at)
         except pg_exc.UniqueViolationError as exc:
             raise UserAlreadyExistsError("User already exists") from exc
         except Exception as exc:

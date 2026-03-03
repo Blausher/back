@@ -17,6 +17,7 @@ from app.repositories.prediction_cache import (
     ModerationResultRedisStorage,
     PredictionRedisStorage,
 )
+from app.observability.metrics import PREDICTIONS_TOTAL
 from app.services import moderation, prediction
 
 router = APIRouter()
@@ -151,6 +152,10 @@ def _predict(advertisement: Advertisement) -> tuple[bool, float]:
             status_code=500,
             detail="Model inference failed",
         ) from exc
+
+    PREDICTIONS_TOTAL.labels(
+        result="violation" if probability >= 0.5 else "no_violation",
+    ).inc()
 
     logger.info(
         "Predict request seller_id=%s item_id=%s probability=%s",

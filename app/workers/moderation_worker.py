@@ -9,6 +9,7 @@ from typing import Any
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from app.clients.model import ModelClient
+from app.observability.metrics import PREDICTIONS_TOTAL
 from app.clients.postgres import get_pg_connection
 
 
@@ -301,6 +302,7 @@ class ModerationWorker:
         """Считает вероятность нарушения и бинарный итог по порогу 0.5."""
         probability = self.model_client.predict_probability(advertisement)
         is_violation = probability >= 0.5
+        PREDICTIONS_TOTAL.labels(result="violation" if is_violation else "no_violation").inc()
         return is_violation, probability
 
     async def _mark_completed(self, item_id: int, is_violation: bool, probability: float) -> int | None:

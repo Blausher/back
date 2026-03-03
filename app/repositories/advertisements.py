@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Mapping
 
 from asyncpg import exceptions as pg_exc
@@ -10,6 +11,15 @@ from app.errors import (
     StorageUnavailableError,
 )
 from app.models.advertisement import Advertisement
+from app.observability.metrics import DB_QUERY_DURATION
+
+
+async def _timed_fetchrow(connection, query_type: str, query: str, *args):
+    started_at = perf_counter()
+    try:
+        return await connection.fetchrow(query, *args)
+    finally:
+        DB_QUERY_DURATION.labels(query_type=query_type).observe(perf_counter() - started_at)
 
 
 @dataclass(frozen=True)
@@ -30,7 +40,7 @@ class AdvertisementStorage:
         """
         try:
             async with get_pg_connection() as connection:
-                record = await connection.fetchrow(query, item_id)
+                record = await _timed_fetchrow(connection, "select", query, item_id)
         except Exception as exc:
             raise StorageUnavailableError("Storage operation failed") from exc
         if record is None:
@@ -59,10 +69,12 @@ class AdvertisementStorage:
 
         try:
             async with get_pg_connection() as connection:
-                seller_row = await connection.fetchrow(seller_exists_query, seller_id)
+                seller_row = await _timed_fetchrow(connection, "select", seller_exists_query, seller_id)
                 if seller_row is None:
                     raise SellerNotFoundError("Seller not found")
-                record = await connection.fetchrow(
+                record = await _timed_fetchrow(
+                    connection,
+                    "insert",
                     insert_query,
                     item_id,
                     seller_id,
@@ -103,7 +115,7 @@ class AdvertisementStorage:
         try:
             async with get_pg_connection() as connection:
                 async with connection.transaction():
-                    record = await connection.fetchrow(query, item_id)
+                    record = await _timed_fetchrow(connection, "delete", query, item_id)
         except Exception as exc:
             raise StorageUnavailableError("Storage operation failed") from exc
         if record is None:

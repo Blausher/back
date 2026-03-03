@@ -1,7 +1,8 @@
-import time
+from time import perf_counter
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+
 from .metrics import REQUEST_COUNT, REQUEST_DURATION
 
 class PrometheusMiddleware(BaseHTTPMiddleware):
@@ -13,14 +14,19 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         
         method = request.method
-        endpoint = request.url.path
-        start_time = time.time()
+        start_time = perf_counter()
 
         response = await call_next(request)
 
-        duration = time.time() - start_time
-        REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=response.status_code).inc()
+        route = request.scope.get("route")
+        endpoint = getattr(route, "path", path)
+        duration = perf_counter() - start_time
+
+        REQUEST_COUNT.labels(
+            method=method,
+            endpoint=endpoint,
+            status=str(response.status_code),
+        ).inc()
         REQUEST_DURATION.labels(method=method, endpoint=endpoint).observe(duration)
 
         return response
-

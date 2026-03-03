@@ -4,7 +4,7 @@ from fastapi import FastAPI
 import uvicorn
 
 from app.routers import entities, predict, root
-from observability.middleware import PrometheusMiddleware
+from app.observability.middleware import PrometheusMiddleware
 
 
 logging.basicConfig(level=logging.INFO)

@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Protocol
 
 import numpy as np
 
+from app.observability.metrics import (
+    MODEL_PREDICTION_PROBABILITY,
+    PREDICTION_DURATION,
+    PREDICTION_ERRORS_TOTAL,
+)
 from app.services.model import load_or_train_model
 
 
@@ -64,9 +70,21 @@ class ModelClient:
 
     def predict_probability(self, item: ModerationInput) -> float:
         """Возвращает вероятность класса `violation`."""
-        model = self._ensure_loaded()
-        features = self._build_features(item)
         try:
-            return float(model.predict_proba(features)[0][1])
+            model = self._ensure_loaded()
+        except ModelNotLoadedError:
+            PREDICTION_ERRORS_TOTAL.labels(error_type="model_unavailable").inc()
+            raise
+
+        features = self._build_features(item)
+        started_at = perf_counter()
+        try:
+            probability = float(model.predict_proba(features)[0][1])
         except Exception as exc:
+            PREDICTION_ERRORS_TOTAL.labels(error_type="prediction_error").inc()
             raise ModelInferenceError("Model inference failed") from exc
+        finally:
+            PREDICTION_DURATION.observe(perf_counter() - started_at)
+
+        MODEL_PREDICTION_PROBABILITY.observe(probability)
+        return probability
