@@ -4,6 +4,13 @@ CREATE TABLE users (
     CHECK (id >= 0)
 );
 
+CREATE TABLE account (
+    id SERIAL PRIMARY KEY,
+    login TEXT NOT NULL UNIQUE CHECK (char_length(login) > 0),
+    password TEXT NOT NULL CHECK (char_length(password) > 0),
+    is_blocked BOOLEAN NOT NULL DEFAULT FALSE
+);
+
 CREATE TABLE advertisements (
     item_id INTEGER PRIMARY KEY,
     seller_id INTEGER NOT NULL REFERENCES users(id),

@@ -20,3 +20,23 @@ class SellerNotFoundError(StorageError):
 
 class AdvertisementAlreadyExistsError(StorageError):
     """Объявление уже существует."""
+
+
+class AccountAlreadyExistsError(StorageError):
+    """Аккаунт уже существует."""
+
+
+class AuthenticationError(AppError):
+    """Базовая ошибка авторизации."""
+
+
+class InvalidCredentialsError(AuthenticationError):
+    """Логин или пароль невалидны."""
+
+
+class AccountBlockedError(AuthenticationError):
+    """Аккаунт заблокирован."""
+
+
+class InvalidTokenError(AuthenticationError):
+    """JWT-токен невалиден."""
