@@ -42,6 +42,16 @@ class AuthService:
             raise AccountBlockedError("Account is blocked")
         return self.issue_token(account)
 
+    async def verify(self, token: str) -> Account:
+        """Проверяет access token и возвращает аккаунт из хранилища."""
+        payload = self.verify_token(token)
+        account = await self.account_repository.get_by_id(payload.account_id)
+        if account is None:
+            raise InvalidTokenError("JWT token is invalid")
+        if account.is_blocked:
+            raise AccountBlockedError("Account is blocked")
+        return account
+
     def issue_token(self, account: Account) -> str:
         """Создает подписанный access JWT для аккаунта."""
         issued_at = datetime.now(timezone.utc)

@@ -1,10 +1,12 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from app.clients.kafka import KafkaProducerClient
 from app.clients.model import ModelInferenceError, ModelNotLoadedError
+from app.dependencies import require_account
 from app.errors import StorageUnavailableError
+from app.models.account import Account
 from app.models.advertisement import Advertisement
 from app.models.async_predict import (
     AsyncPredictRequest,
@@ -30,7 +32,10 @@ kafka_client = KafkaProducerClient()
 
 
 @router.post("/predict")
-async def predict(advertisement: Advertisement) -> dict:
+async def predict(
+    advertisement: Advertisement,
+    _account: Account = Depends(require_account),
+) -> dict:
     """
     Возвращает валидность объявления и вероятность.
     """
@@ -48,7 +53,10 @@ async def predict(advertisement: Advertisement) -> dict:
 
 
 @router.get("/simple_predict")
-async def simple_predict(item_id: int) -> dict:
+async def simple_predict(
+    item_id: int,
+    _account: Account = Depends(require_account),
+) -> dict:
     """
     Возвращает валидность объявления по item_id.
     """
@@ -80,7 +88,10 @@ async def simple_predict(item_id: int) -> dict:
 
 
 @router.post("/async_predict", response_model=AsyncPredictResponse)
-async def async_predict(payload: AsyncPredictRequest) -> dict:
+async def async_predict(
+    payload: AsyncPredictRequest,
+    _account: Account = Depends(require_account),
+) -> dict:
     """
     Создает задачу на модерацию объявления по item_id и отправляет запрос в Kafka очередь.
     """
@@ -111,7 +122,10 @@ async def async_predict(payload: AsyncPredictRequest) -> dict:
 
 
 @router.get("/moderation_result/{task_id}", response_model=ModerationResultResponse)
-async def moderation_result(task_id: int = Path(ge=0)) -> dict:
+async def moderation_result(
+    task_id: int = Path(ge=0),
+    _account: Account = Depends(require_account),
+) -> dict:
     """
     Возвращает статус задачи модерации по task_id.
     """

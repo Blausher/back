@@ -93,6 +93,8 @@ erDiagram
 | Метод | Путь | Назначение |
 |---|---|---|
 | `GET` | `/` | health/check, возвращает `{"message":"Hello World"}` |
+| `POST` | `/accounts` | создать аккаунт для последующего логина |
+| `POST` | `/login` | получить auth-cookie по `login` и `password` |
 | `POST` | `/users` | создать пользователя |
 | `POST` | `/advertisements` | создать объявление |
 | `POST` | `/close` | закрыть объявление по `item_id` (удаляет объявление, результаты модерации и кэш) |
@@ -122,4 +124,3 @@ Dockerfile
 docker compose exec -T redis redis-cli DBSIZE
 docker compose exec -T redis redis-cli --scan
 ```
-
