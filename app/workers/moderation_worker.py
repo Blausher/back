@@ -3,47 +3,20 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
-from dataclasses import dataclass
 from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
-from app.clients.model import ModelClient
+from app.clients.model import ModelClient, ModelNotLoadedError
+from app.models.advertisement import Advertisement
 from app.observability.metrics import PREDICTIONS_TOTAL
-from app.clients.postgres import get_pg_connection
+from app.repositories.advertisements import AdvertisementRepository
+from app.repositories.moderation_results import ModerationResultRepository
+from app.repositories.processed_events import ProcessedEventRepository
 
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class AdvertisementRow:
-    item_id: int
-    seller_id: int
-    is_verified_seller: bool
-    description: str
-    category: int
-    images_qty: int
-
-
-async def ensure_idempotency(
-    conn,
-    event_id: str,
-    item_id: int,
-    moderation_result_id: int,
-) -> bool:
-    """Пишет event в processed_events; возвращает True только для первого события."""
-    result = await conn.execute(
-        """
-        INSERT INTO processed_events (event_id, item_id, moderation_result_id)
-        VALUES ($1, $2, $3)
-        ON CONFLICT DO NOTHING
-        """,
-        event_id,
-        item_id,
-        moderation_result_id,
-    )
-    return not result.endswith("0")
+_UNSET = object()
 
 
 class ModerationWorker:
@@ -56,6 +29,11 @@ class ModerationWorker:
         group_id: str | None = None,
         dlq_topic: str = "moderation_dlq",
         model_path: str = "model.pkl",
+        max_attempts: int = 3,
+        retry_delay_seconds: float = 5.0,
+        advertisement_repo: AdvertisementRepository | None = None,
+        moderation_result_repo: ModerationResultRepository | None = None,
+        processed_event_repo: ProcessedEventRepository | None = None,
     ) -> None:
         """Инициализирует consumer и загружает ML-модель."""
         self.bootstrap_servers = bootstrap_servers or os.getenv(
@@ -65,7 +43,18 @@ class ModerationWorker:
         self.topic = topic
         self.group_id = group_id or os.getenv("KAFKA_MODERATION_GROUP_ID", "moderation-worker")
         self.dlq_topic = os.getenv("KAFKA_DLQ_TOPIC", dlq_topic)
+        self.max_attempts = self._parse_max_attempts(
+            os.getenv("MODERATION_MAX_ATTEMPTS"),
+            default=max_attempts,
+        )
+        self.retry_delay_seconds = self._parse_retry_delay_seconds(
+            os.getenv("MODERATION_RETRY_DELAY_SECONDS"),
+            default=retry_delay_seconds,
+        )
         self.model_client = ModelClient(model_path=model_path)
+        self.advertisement_repo = advertisement_repo or AdvertisementRepository()
+        self.moderation_result_repo = moderation_result_repo or ModerationResultRepository()
+        self.processed_event_repo = processed_event_repo or ProcessedEventRepository()
         self.consumer = AIOKafkaConsumer(
             self.topic,
             bootstrap_servers=self.bootstrap_servers,
@@ -114,104 +103,189 @@ class ModerationWorker:
             return
 
         logger.info("Processing moderation request item_id=%s", item_id)
-
-        try:
-            pending_task_id = await self._get_pending_task_id(item_id)
-        except Exception as exc:
-            logger.exception("Failed to read pending moderation task item_id=%s", item_id)
+        initial_retry_count = self._extract_retry_count(payload)
+        if initial_retry_count >= self.max_attempts:
             await self._handle_processing_error(
                 item_id=item_id,
-                error_message=self._compose_error_message("Pending task lookup failed", exc),
+                error_message="Retry limit exceeded before processing",
                 payload=payload,
+                retry_count=initial_retry_count,
             )
             return
+        pending_task_id: int | None | object = _UNSET
+        first_time: bool | None = None
 
-        if pending_task_id is None:
-            logger.warning("No pending moderation task for item_id=%s", item_id)
-            return
+        for attempt in range(initial_retry_count + 1, self.max_attempts + 1):
+            if pending_task_id is _UNSET:
+                try:
+                    pending_task_id = await self.moderation_result_repo.get_pending_task_id(item_id)
+                except Exception as exc:
+                    logger.exception("Failed to read pending moderation task item_id=%s", item_id)
+                    should_retry = await self._retry_or_fail(
+                        item_id=item_id,
+                        payload=payload,
+                        attempt=attempt,
+                        error_message=self._compose_error_message("Pending task lookup failed", exc),
+                        temporary=True,
+                    )
+                    if should_retry:
+                        continue
+                    return
 
-        event_id = f"moderation:{item_id}:{pending_task_id}"
-        try:
-            first_time = await self._ensure_idempotency(event_id, item_id, pending_task_id)
-        except Exception as exc:
-            logger.exception("Failed to persist idempotency key item_id=%s event_id=%s", item_id, event_id)
-            await self._handle_processing_error(
-                item_id=item_id,
-                error_message=self._compose_error_message("Idempotency persistence failed", exc),
-                payload=payload,
-            )
-            return
+            if pending_task_id is None:
+                logger.warning("No pending moderation task for item_id=%s", item_id)
+                return
 
-        if not first_time:
+            if first_time is None:
+                event_id = f"moderation:{item_id}:{pending_task_id}"
+                try:
+                    first_time = await self.processed_event_repo.register_processing(
+                        event_id=event_id,
+                        item_id=item_id,
+                        moderation_result_id=pending_task_id,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Failed to persist idempotency key item_id=%s event_id=%s",
+                        item_id,
+                        event_id,
+                    )
+                    should_retry = await self._retry_or_fail(
+                        item_id=item_id,
+                        payload=payload,
+                        attempt=attempt,
+                        error_message=self._compose_error_message("Idempotency persistence failed", exc),
+                        temporary=True,
+                    )
+                    if should_retry:
+                        continue
+                    return
+
+            if not first_time:
+                logger.info(
+                    "Duplicate moderation event skipped item_id=%s task_id=%s event_id=%s",
+                    item_id,
+                    pending_task_id,
+                    event_id,
+                )
+                return
+
+            try:
+                advertisement = await self.advertisement_repo.select_advert(item_id)
+            except Exception as exc:
+                logger.exception("Failed to read advertisement item_id=%s", item_id)
+                should_retry = await self._retry_or_fail(
+                    item_id=item_id,
+                    payload=payload,
+                    attempt=attempt,
+                    error_message=self._compose_error_message("Database read failed", exc),
+                    temporary=True,
+                )
+                if should_retry:
+                    continue
+                return
+
+            if advertisement is None:
+                await self._handle_processing_error(
+                    item_id=item_id,
+                    error_message="Advertisement not found",
+                    payload=payload,
+                    retry_count=attempt,
+                )
+                return
+
+            try:
+                is_violation, probability = self._predict(advertisement)
+            except Exception as exc:
+                logger.exception("Prediction failed item_id=%s", item_id)
+                should_retry = await self._retry_or_fail(
+                    item_id=item_id,
+                    payload=payload,
+                    attempt=attempt,
+                    error_message=self._compose_error_message("Prediction failed", exc),
+                    temporary=self._is_temporary_prediction_error(exc),
+                )
+                if should_retry:
+                    continue
+                return
+
+            try:
+                task_id = await self.moderation_result_repo.mark_completed(item_id, is_violation, probability)
+            except Exception as exc:
+                logger.exception("Failed to update moderation result item_id=%s", item_id)
+                should_retry = await self._retry_or_fail(
+                    item_id=item_id,
+                    payload=payload,
+                    attempt=attempt,
+                    error_message=self._compose_error_message("Failed to update moderation result", exc),
+                    temporary=True,
+                )
+                if should_retry:
+                    continue
+                return
+
+            if task_id is None:
+                logger.warning("No pending moderation task for item_id=%s", item_id)
+                return
+
             logger.info(
-                "Duplicate moderation event skipped item_id=%s task_id=%s event_id=%s",
+                "Moderation completed task_id=%s item_id=%s is_violation=%s probability=%s attempts=%s",
+                task_id,
                 item_id,
-                pending_task_id,
-                event_id,
+                is_violation,
+                probability,
+                attempt,
             )
             return
-
-        try:
-            advertisement = await self._load_advertisement(item_id)
-        except Exception as exc:
-            logger.exception("Failed to read advertisement item_id=%s", item_id)
-            await self._handle_processing_error(
-                item_id=item_id,
-                error_message=self._compose_error_message("Database read failed", exc),
-                payload=payload,
-            )
-            return
-
-        if advertisement is None:
-            await self._handle_processing_error(
-                item_id=item_id,
-                error_message="Advertisement not found",
-                payload=payload,
-            )
-            return
-
-        try:
-            is_violation, probability = self._predict(advertisement)
-        except Exception as exc:
-            logger.exception("Prediction failed item_id=%s", item_id)
-            await self._handle_processing_error(
-                item_id=item_id,
-                error_message=self._compose_error_message("Prediction failed", exc),
-                payload=payload,
-            )
-            return
-
-        try:
-            task_id = await self._mark_completed(item_id, is_violation, probability)
-        except Exception as exc:
-            logger.exception("Failed to update moderation result item_id=%s", item_id)
-            await self._handle_processing_error(
-                item_id=item_id,
-                error_message=self._compose_error_message("Failed to update moderation result", exc),
-                payload=payload,
-            )
-            return
-
-        if task_id is None:
-            logger.warning("No pending moderation task for item_id=%s", item_id)
-            return
-
-        logger.info(
-            "Moderation completed task_id=%s item_id=%s is_violation=%s probability=%s",
-            task_id,
-            item_id,
-            is_violation,
-            probability,
-        )
 
     async def _handle_processing_error(
         self,
         item_id: int,
         error_message: str,
         payload: bytes,
+        retry_count: int | None = None,
     ) -> None:
-        await self._mark_failed(item_id, error_message)
-        await self._send_to_dlq(error_message, payload)
+        try:
+            task_id = await self.moderation_result_repo.mark_failed(item_id, error_message)
+        except Exception:
+            logger.exception("Failed to persist failed status item_id=%s", item_id)
+        else:
+            if task_id is not None:
+                logger.info(
+                    "Moderation failed task_id=%s item_id=%s error=%s",
+                    task_id,
+                    item_id,
+                    error_message,
+                )
+        await self._send_to_dlq(error_message, payload, retry_count=retry_count)
+
+    async def _retry_or_fail(
+        self,
+        item_id: int,
+        payload: bytes,
+        attempt: int,
+        error_message: str,
+        temporary: bool,
+    ) -> bool:
+        if temporary and attempt < self.max_attempts:
+            logger.warning(
+                "Temporary moderation error item_id=%s attempt=%s/%s retry_in=%ss error=%s",
+                item_id,
+                attempt,
+                self.max_attempts,
+                self.retry_delay_seconds,
+                error_message,
+            )
+            await asyncio.sleep(self.retry_delay_seconds)
+            return True
+
+        await self._handle_processing_error(
+            item_id=item_id,
+            error_message=error_message,
+            payload=payload,
+            retry_count=attempt,
+        )
+        return False
 
     @staticmethod
     def _compose_error_message(base_message: str, exc: Exception | None) -> str:
@@ -221,38 +295,6 @@ class ModerationWorker:
         if not details:
             return base_message
         return f"{base_message}: {details}"
-
-    async def _get_pending_task_id(self, item_id: int) -> int | None:
-        """Возвращает id старейшей pending-задачи по item_id."""
-        query = """
-            SELECT id
-            FROM moderation_results
-            WHERE item_id = $1
-              AND status = 'pending'
-            ORDER BY id ASC
-            LIMIT 1
-        """
-        async with get_pg_connection() as connection:
-            row = await connection.fetchrow(query, item_id)
-        if row is None:
-            return None
-        return int(row["id"])
-
-    async def _ensure_idempotency(
-        self,
-        event_id: str,
-        item_id: int,
-        moderation_result_id: int,
-    ) -> bool:
-        """Регистрирует обработку события, защищая от повторной обработки дублей."""
-        async with get_pg_connection() as connection:
-            async with connection.transaction():
-                return await ensure_idempotency(
-                    connection,
-                    event_id=event_id,
-                    item_id=item_id,
-                    moderation_result_id=moderation_result_id,
-                )
 
     @staticmethod
     def _extract_item_id(payload: Any) -> int | None:
@@ -271,117 +313,26 @@ class ModerationWorker:
             return None
         return item_id
 
-    async def _load_advertisement(self, item_id: int) -> AdvertisementRow | None:
-        """Читает объявление и данные продавца из БД."""
-        query = """
-            SELECT
-                a.item_id,
-                a.seller_id,
-                u.is_verified_seller,
-                a.description,
-                a.category,
-                a.images_qty
-            FROM advertisements AS a
-            JOIN users AS u ON u.id = a.seller_id
-            WHERE a.item_id = $1
-        """
-        async with get_pg_connection() as connection:
-            row = await connection.fetchrow(query, item_id)
-        if row is None:
-            return None
-        return AdvertisementRow(
-            item_id=row["item_id"],
-            seller_id=row["seller_id"],
-            is_verified_seller=row["is_verified_seller"],
-            description=row["description"],
-            category=row["category"],
-            images_qty=row["images_qty"],
-        )
-
-    def _predict(self, advertisement: AdvertisementRow) -> tuple[bool, float]:
+    def _predict(self, advertisement: Advertisement) -> tuple[bool, float]:
         """Считает вероятность нарушения и бинарный итог по порогу 0.5."""
         probability = self.model_client.predict_probability(advertisement)
         is_violation = probability >= 0.5
         PREDICTIONS_TOTAL.labels(result="violation" if is_violation else "no_violation").inc()
         return is_violation, probability
 
-    async def _mark_completed(self, item_id: int, is_violation: bool, probability: float) -> int | None:
-        """Переводит старейшую pending-задачу в completed и пишет результат."""
-        query = """
-            WITH pending_task AS (
-                SELECT id
-                FROM moderation_results
-                WHERE item_id = $1 AND status = 'pending'
-                ORDER BY id ASC
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-            )
-            UPDATE moderation_results AS mr
-            SET
-                status = 'completed',
-                is_violation = $2,
-                probability = $3,
-                error_message = NULL,
-                processed_at = NOW()
-            FROM pending_task
-            WHERE mr.id = pending_task.id
-            RETURNING mr.id
-        """
-        async with get_pg_connection() as connection:
-            async with connection.transaction():
-                row = await connection.fetchrow(query, item_id, is_violation, probability)
-        if row is None:
-            return None
-        return int(row["id"])
-
-    async def _mark_failed(self, item_id: int, error_message: str) -> int | None:
-        """Переводит pending-задачу в failed и пишет текст ошибки."""
-        query = """
-            WITH pending_task AS (
-                SELECT id
-                FROM moderation_results
-                WHERE item_id = $1 AND status = 'pending'
-                ORDER BY id ASC
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-            )
-            UPDATE moderation_results AS mr
-            SET
-                status = 'failed',
-                is_violation = NULL,
-                probability = NULL,
-                error_message = $2,
-                processed_at = NOW()
-            FROM pending_task
-            WHERE mr.id = pending_task.id
-            RETURNING mr.id
-        """
-        try:
-            async with get_pg_connection() as connection:
-                async with connection.transaction():
-                    row = await connection.fetchrow(query, item_id, error_message[:1000])
-        except Exception:
-            logger.exception("Failed to persist failed status item_id=%s", item_id)
-            return None
-        if row is None:
-            return None
-        task_id = int(row["id"])
-        logger.info(
-            "Moderation failed task_id=%s item_id=%s error=%s",
-            task_id,
-            item_id,
-            error_message,
-        )
-        return task_id
+    @staticmethod
+    def _is_temporary_prediction_error(exc: Exception) -> bool:
+        return isinstance(exc, ModelNotLoadedError)
 
     async def _send_to_dlq(
         self,
         error_message: str,
         payload: bytes | bytearray | None,
+        retry_count: int | None = None,
     ) -> None:
         """Отправляет сообщение об ошибке в DLQ топик."""
         original_message: dict[str, Any]
-        retry_count = 1
+        resolved_retry_count = retry_count if retry_count is not None else 1
         payload_text = ""
         if isinstance(payload, (bytes, bytearray)):
             payload_text = payload.decode("utf-8", errors="replace")
@@ -396,8 +347,8 @@ class ModerationWorker:
         if isinstance(parsed_payload, dict):
             original_message = parsed_payload
             raw_retry_count = parsed_payload.get("retry_count")
-            if isinstance(raw_retry_count, int) and raw_retry_count >= 0:
-                retry_count = raw_retry_count + 1
+            if retry_count is None and isinstance(raw_retry_count, int) and raw_retry_count >= 0:
+                resolved_retry_count = raw_retry_count + 1
         else:
             original_message = {"raw_payload": payload_text}
 
@@ -406,7 +357,7 @@ class ModerationWorker:
             "original_message": original_message,
             "error": error_message,
             "timestamp": timestamp,
-            "retry_count": retry_count,
+            "retry_count": resolved_retry_count,
         }
 
         try:
@@ -416,6 +367,38 @@ class ModerationWorker:
                 "Failed to publish message to DLQ topic=%s",
                 self.dlq_topic,
             )
+
+    @staticmethod
+    def _extract_retry_count(payload: Any) -> int:
+        if not isinstance(payload, (bytes, bytearray)):
+            return 0
+        try:
+            decoded = payload.decode("utf-8")
+            body = json.loads(decoded)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 0
+        if not isinstance(body, dict):
+            return 0
+        retry_count = body.get("retry_count")
+        if not isinstance(retry_count, int) or retry_count < 0:
+            return 0
+        return retry_count
+
+    @staticmethod
+    def _parse_max_attempts(raw_value: str | None, default: int) -> int:
+        try:
+            parsed = int(raw_value) if raw_value is not None else default
+        except (TypeError, ValueError):
+            return default
+        return max(1, parsed)
+
+    @staticmethod
+    def _parse_retry_delay_seconds(raw_value: str | None, default: float) -> float:
+        try:
+            parsed = float(raw_value) if raw_value is not None else default
+        except (TypeError, ValueError):
+            return default
+        return max(0.0, parsed)
 
 
 async def main() -> None:

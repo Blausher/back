@@ -6,6 +6,7 @@ import pytest
 
 from app.repositories.advertisements import AdvertisementRepository
 from app.repositories.moderation_results import ModerationResultRepository
+from app.repositories.processed_events import ProcessedEventRepository
 from app.repositories.users import UserRepository
 
 
@@ -156,5 +157,93 @@ async def test_postgres_advertisement_close_removes_advertisement_and_moderation
         assert await advertisement_repo.select_advert(item_id) is None
         assert await moderation_repo.get_by_id(pending.id) is None
         assert await advertisement_repo.close(item_id) is None
+    finally:
+        await _cleanup(item_id, user_id)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_moderation_result_worker_methods_update_pending_task():
+    """Проверяет worker-ориентированные методы moderation result репозитория."""
+    await _require_live_postgres()
+    user_id, item_id = _new_ids()
+    user_repo = UserRepository()
+    advertisement_repo = AdvertisementRepository()
+    moderation_repo = ModerationResultRepository()
+
+    await _cleanup(item_id, user_id)
+    try:
+        await user_repo.create(user_id=user_id, is_verified_seller=True)
+        await advertisement_repo.create(
+            seller_id=user_id,
+            item_id=item_id,
+            name="Integration ad",
+            description="Worker repository methods",
+            category=6,
+            images_qty=2,
+        )
+
+        pending = await moderation_repo.create_pending(item_id)
+        pending_task_id = await moderation_repo.get_pending_task_id(item_id)
+        completed_task_id = await moderation_repo.mark_completed(item_id, True, 0.87)
+        loaded = await moderation_repo.get_by_id(pending.id)
+
+        assert pending_task_id == pending.id
+        assert completed_task_id == pending.id
+        assert loaded is not None
+        assert loaded.status == "completed"
+        assert loaded.is_violation is True
+        assert loaded.probability == pytest.approx(0.87)
+        assert await moderation_repo.get_pending_task_id(item_id) is None
+    finally:
+        await _cleanup(item_id, user_id)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_moderation_result_mark_failed_and_processed_event_idempotency():
+    """Проверяет failed-обновление и идемпотентность processed_events."""
+    await _require_live_postgres()
+    user_id, item_id = _new_ids()
+    user_repo = UserRepository()
+    advertisement_repo = AdvertisementRepository()
+    moderation_repo = ModerationResultRepository()
+    processed_event_repo = ProcessedEventRepository()
+
+    await _cleanup(item_id, user_id)
+    try:
+        await user_repo.create(user_id=user_id, is_verified_seller=False)
+        await advertisement_repo.create(
+            seller_id=user_id,
+            item_id=item_id,
+            name="Integration ad",
+            description="Processed events integration",
+            category=8,
+            images_qty=1,
+        )
+
+        pending = await moderation_repo.create_pending(item_id)
+        failed_task_id = await moderation_repo.mark_failed(item_id, "temporary error")
+        failed = await moderation_repo.get_by_id(pending.id)
+        retried_pending = await moderation_repo.create_pending(item_id)
+
+        first_insert = await processed_event_repo.register_processing(
+            event_id=f"moderation:{item_id}:{retried_pending.id}",
+            item_id=item_id,
+            moderation_result_id=retried_pending.id,
+        )
+        second_insert = await processed_event_repo.register_processing(
+            event_id=f"moderation:{item_id}:{retried_pending.id}",
+            item_id=item_id,
+            moderation_result_id=retried_pending.id,
+        )
+
+        assert failed_task_id == pending.id
+        assert failed is not None
+        assert failed.status == "failed"
+        assert failed.error_message == "temporary error"
+        assert retried_pending.id != pending.id
+        assert first_insert is True
+        assert second_insert is False
     finally:
         await _cleanup(item_id, user_id)

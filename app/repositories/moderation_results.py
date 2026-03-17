@@ -57,6 +57,86 @@ class ModerationResultStorage:
             return None
         return dict(record)
 
+    async def get_pending_task_id(self, item_id: int) -> int | None:
+        query = """
+            SELECT id
+            FROM moderation_results
+            WHERE item_id = $1
+              AND status = 'pending'
+            ORDER BY id ASC
+            LIMIT 1
+        """
+        try:
+            async with get_pg_connection() as connection:
+                row = await connection.fetchrow(query, item_id)
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
+        if row is None:
+            return None
+        return int(row["id"])
+
+    async def mark_completed(self, item_id: int, is_violation: bool, probability: float) -> int | None:
+        query = """
+            WITH pending_task AS (
+                SELECT id
+                FROM moderation_results
+                WHERE item_id = $1 AND status = 'pending'
+                ORDER BY id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            UPDATE moderation_results AS mr
+            SET
+                status = 'completed',
+                is_violation = $2,
+                probability = $3,
+                error_message = NULL,
+                processed_at = NOW()
+            FROM pending_task
+            WHERE mr.id = pending_task.id
+            RETURNING mr.id
+        """
+        try:
+            async with get_pg_connection() as connection:
+                async with connection.transaction():
+                    row = await connection.fetchrow(query, item_id, is_violation, probability)
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
+        if row is None:
+            return None
+        return int(row["id"])
+
+    async def mark_failed(self, item_id: int, error_message: str) -> int | None:
+        query = """
+            WITH pending_task AS (
+                SELECT id
+                FROM moderation_results
+                WHERE item_id = $1 AND status = 'pending'
+                ORDER BY id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            UPDATE moderation_results AS mr
+            SET
+                status = 'failed',
+                is_violation = NULL,
+                probability = NULL,
+                error_message = $2,
+                processed_at = NOW()
+            FROM pending_task
+            WHERE mr.id = pending_task.id
+            RETURNING mr.id
+        """
+        try:
+            async with get_pg_connection() as connection:
+                async with connection.transaction():
+                    row = await connection.fetchrow(query, item_id, error_message[:1000])
+        except Exception as exc:
+            raise StorageUnavailableError("Storage operation failed") from exc
+        if row is None:
+            return None
+        return int(row["id"])
+
 
 @dataclass(frozen=True)
 class ModerationResultRepository:
@@ -71,3 +151,12 @@ class ModerationResultRepository:
         if raw_result is None:
             return None
         return ModerationResult.model_validate(raw_result)
+
+    async def get_pending_task_id(self, item_id: int) -> int | None:
+        return await self.moderation_result_storage.get_pending_task_id(item_id)
+
+    async def mark_completed(self, item_id: int, is_violation: bool, probability: float) -> int | None:
+        return await self.moderation_result_storage.mark_completed(item_id, is_violation, probability)
+
+    async def mark_failed(self, item_id: int, error_message: str) -> int | None:
+        return await self.moderation_result_storage.mark_failed(item_id, error_message)

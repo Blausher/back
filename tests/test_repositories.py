@@ -8,6 +8,7 @@ from app.models.moderation_result import ModerationResult
 from app.models.user import User
 from app.repositories import advertisements as ads_repo
 from app.repositories import moderation_results as mr_repo
+from app.repositories import processed_events as pe_repo
 from app.repositories import users as users_repo
 
 
@@ -20,8 +21,9 @@ class DummyTransaction:
 
 
 class DummyConnection:
-    def __init__(self, row):
+    def __init__(self, row, execute_result="INSERT 0 1"):
         self.row = row
+        self.execute_result = execute_result
         self.executed = []
         self.fetched = []
 
@@ -30,6 +32,7 @@ class DummyConnection:
 
     async def execute(self, query, *args):
         self.executed.append((query, args))
+        return self.execute_result
 
     async def fetchrow(self, query, *args):
         self.fetched.append((query, args))
@@ -204,6 +207,107 @@ async def test_moderation_result_create_pending_returns_existing_completed(monke
     assert result.status == "completed"
     assert len(connection.fetched) == 1
     assert "SELECT id, item_id, status" in connection.fetched[0][0]
+
+
+@pytest.mark.asyncio
+async def test_moderation_result_get_pending_task_id(monkeypatch):
+    connection = DummyConnection({"id": 777})
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(mr_repo, "get_pg_connection", conn_stub)
+
+    repo = mr_repo.ModerationResultRepository()
+    pending_task_id = await repo.get_pending_task_id(42)
+
+    assert pending_task_id == 777
+    assert len(connection.fetched) == 1
+    assert "status = 'pending'" in connection.fetched[0][0]
+
+
+@pytest.mark.asyncio
+async def test_moderation_result_mark_completed(monkeypatch):
+    connection = DummyConnection({"id": 778})
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(mr_repo, "get_pg_connection", conn_stub)
+
+    repo = mr_repo.ModerationResultRepository()
+    task_id = await repo.mark_completed(42, True, 0.95)
+
+    assert task_id == 778
+    assert len(connection.fetched) == 1
+    assert "status = 'completed'" in connection.fetched[0][0]
+    assert connection.fetched[0][1] == (42, True, 0.95)
+
+
+@pytest.mark.asyncio
+async def test_moderation_result_mark_failed_truncates_error(monkeypatch):
+    connection = DummyConnection({"id": 779})
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(mr_repo, "get_pg_connection", conn_stub)
+
+    repo = mr_repo.ModerationResultRepository()
+    error_message = "x" * 1500
+    task_id = await repo.mark_failed(42, error_message)
+
+    assert task_id == 779
+    assert len(connection.fetched) == 1
+    assert "status = 'failed'" in connection.fetched[0][0]
+    assert connection.fetched[0][1][0] == 42
+    assert len(connection.fetched[0][1][1]) == 1000
+
+
+@pytest.mark.asyncio
+async def test_processed_event_repository_register_processing_first_insert(monkeypatch):
+    connection = DummyConnection(row=None, execute_result="INSERT 0 1")
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(pe_repo, "get_pg_connection", conn_stub)
+
+    repo = pe_repo.ProcessedEventRepository()
+    first_time = await repo.register_processing(
+        event_id="moderation:42:10",
+        item_id=42,
+        moderation_result_id=10,
+    )
+
+    assert first_time is True
+    assert len(connection.executed) == 1
+    assert "INSERT INTO processed_events" in connection.executed[0][0]
+
+
+@pytest.mark.asyncio
+async def test_processed_event_repository_register_processing_duplicate(monkeypatch):
+    connection = DummyConnection(row=None, execute_result="INSERT 0 0")
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(pe_repo, "get_pg_connection", conn_stub)
+
+    repo = pe_repo.ProcessedEventRepository()
+    first_time = await repo.register_processing(
+        event_id="moderation:42:10",
+        item_id=42,
+        moderation_result_id=10,
+    )
+
+    assert first_time is False
+    assert len(connection.executed) == 1
 
 
 @pytest.mark.asyncio
