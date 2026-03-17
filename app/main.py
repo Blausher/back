@@ -1,15 +1,27 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 import uvicorn
 
+from app.clients.postgres import close_pg_pool, init_pg_pool
 from app.routers import entities, predict, root
 from app.observability.middleware import PrometheusMiddleware
 
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await init_pg_pool()
+    try:
+        yield
+    finally:
+        await close_pg_pool()
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.include_router(root.router)
 app.include_router(predict.router)
