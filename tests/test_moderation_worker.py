@@ -166,6 +166,7 @@ async def test_handle_message_marks_failed_and_sends_dlq_when_advert_not_found(m
     )
     dlq_events = []
     sleep_calls = []
+    captured = []
 
     async def fake_send_to_dlq(error_message, payload, retry_count=None):
         dlq_events.append((error_message, payload, retry_count))
@@ -175,6 +176,11 @@ async def test_handle_message_marks_failed_and_sends_dlq_when_advert_not_found(m
 
     worker._send_to_dlq = fake_send_to_dlq
     monkeypatch.setattr(mw.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(
+        mw.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
+    )
 
     payload = f'{{"item_id": {item_id}}}'.encode("utf-8")
     await worker._handle_message(payload)
@@ -183,6 +189,9 @@ async def test_handle_message_marks_failed_and_sends_dlq_when_advert_not_found(m
     assert moderation_repo.failed_calls == [(item_id, "Advertisement not found")]
     assert dlq_events == [("Advertisement not found", payload, 1)]
     assert sleep_calls == []
+    assert len(captured) == 1
+    assert captured[0][1]["tags"]["stage"] == "load_advertisement"
+    assert captured[0][1]["extras"]["item_id"] == item_id
 
 
 @pytest.mark.asyncio
@@ -204,6 +213,7 @@ async def test_handle_message_retries_temporary_prediction_error_then_sends_dlq(
     dlq_events = []
     sleep_calls = []
     predict_attempts = []
+    captured = []
 
     def fake_predict(_advertisement):
         predict_attempts.append("predict")
@@ -218,6 +228,11 @@ async def test_handle_message_retries_temporary_prediction_error_then_sends_dlq(
     worker._predict = fake_predict
     worker._send_to_dlq = fake_send_to_dlq
     monkeypatch.setattr(mw.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(
+        mw.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
+    )
 
     payload = f'{{"item_id": {item_id}}}'.encode("utf-8")
     await worker._handle_message(payload)
@@ -229,6 +244,9 @@ async def test_handle_message_retries_temporary_prediction_error_then_sends_dlq(
     assert moderation_repo.failed_calls == [(item_id, "Prediction failed: Model is not loaded")]
     assert dlq_events == [("Prediction failed: Model is not loaded", payload, 3)]
     assert sleep_calls == [7, 7]
+    assert len(captured) == 1
+    assert captured[0][1]["tags"]["stage"] == "predict"
+    assert captured[0][1]["extras"]["retry_count"] == 3
 
 
 @pytest.mark.asyncio
@@ -248,6 +266,7 @@ async def test_handle_message_retries_temporary_prediction_error_until_success(m
     dlq_events = []
     sleep_calls = []
     predict_attempts = []
+    captured = []
 
     def fake_predict(_advertisement):
         predict_attempts.append("predict")
@@ -264,6 +283,11 @@ async def test_handle_message_retries_temporary_prediction_error_until_success(m
     worker._predict = fake_predict
     worker._send_to_dlq = fake_send_to_dlq
     monkeypatch.setattr(mw.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(
+        mw.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
+    )
 
     payload = f'{{"item_id": {item_id}}}'.encode("utf-8")
     await worker._handle_message(payload)
@@ -273,6 +297,7 @@ async def test_handle_message_retries_temporary_prediction_error_until_success(m
     assert moderation_repo.failed_calls == []
     assert dlq_events == []
     assert sleep_calls == [3, 3]
+    assert captured == []
 
 
 @pytest.mark.asyncio

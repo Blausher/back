@@ -12,6 +12,7 @@ from app.models.advertisement import Advertisement
 from app.models.advertisement_create import AdvertisementCreate
 from app.models.close_advertisement import CloseAdvertisementRequest
 from app.models.user import User
+from app.observability import sentry as sentry_observability
 from app.repositories.advertisements import AdvertisementRepository
 from app.repositories.prediction_cache import (
     ModerationResultRedisStorage,
@@ -25,6 +26,23 @@ advertisement_repo = AdvertisementRepository()
 user_repo = UserRepository()
 prediction_cache_storage = PredictionRedisStorage()
 moderation_result_cache_storage = ModerationResultRedisStorage()
+
+
+def _capture_entities_exception(
+    exc: Exception,
+    *,
+    endpoint: str,
+    **extras: object,
+) -> None:
+    sentry_observability.capture_exception(
+        exc,
+        tags={
+            "component": "api",
+            "router": "entities",
+            "endpoint": endpoint,
+        },
+        extras=extras,
+    )
 
 
 @router.post("/users", response_model=User)
@@ -41,6 +59,7 @@ async def create_user(user: User) -> User:
         raise HTTPException(status_code=409, detail="User already exists") from exc
     except StorageUnavailableError as exc:
         logger.exception("Create user failed")
+        _capture_entities_exception(exc, endpoint="create_user", user_id=user.id)
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
@@ -64,6 +83,12 @@ async def create_advertisement(advertisement: AdvertisementCreate) -> Advertisem
         raise HTTPException(status_code=409, detail="Advertisement already exists") from exc
     except StorageUnavailableError as exc:
         logger.exception("Create advertisement failed")
+        _capture_entities_exception(
+            exc,
+            endpoint="create_advertisement",
+            item_id=advertisement.item_id,
+            seller_id=advertisement.seller_id,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
@@ -76,6 +101,11 @@ async def close_advertisement(payload: CloseAdvertisementRequest) -> dict:
         close_result = await advertisement_repo.close(payload.item_id)
     except StorageUnavailableError as exc:
         logger.exception("Close advertisement failed item_id=%s", payload.item_id)
+        _capture_entities_exception(
+            exc,
+            endpoint="close_advertisement",
+            item_id=payload.item_id,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if close_result is None:

@@ -147,10 +147,17 @@ async def test_predict_validation_error_on_missing_field(missing_field):
 
 async def test_predict_business_logic_error(monkeypatch):
     """Проверяет ошибку бизнес-логики."""
+    captured = []
+
     monkeypatch.setattr(
         predict_router.prediction.model_client,
         "predict_probability",
         lambda _ad: 0.33,
+    )
+    monkeypatch.setattr(
+        predict_router.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
     )
 
     def raise_error(_):
@@ -166,10 +173,14 @@ async def test_predict_business_logic_error(monkeypatch):
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Business logic prediction failed"
+    assert len(captured) == 1
+    assert captured[0][1]["tags"]["endpoint"] == "predict"
 
 
 async def test_predict_model_unavailable(monkeypatch):
     """Проверяет ответ при отсутствии модели."""
+    captured = []
+
     def raise_not_loaded(_ad):
         raise ModelNotLoadedError("Model is not loaded")
 
@@ -177,6 +188,11 @@ async def test_predict_model_unavailable(monkeypatch):
         predict_router.prediction.model_client,
         "predict_probability",
         raise_not_loaded,
+    )
+    monkeypatch.setattr(
+        predict_router.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -187,6 +203,8 @@ async def test_predict_model_unavailable(monkeypatch):
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "Model is not loaded"
+    assert len(captured) == 1
+    assert captured[0][1]["tags"]["endpoint"] == "predict"
 
 
 async def test_simple_predict_success(monkeypatch):
@@ -215,18 +233,26 @@ async def test_simple_predict_success(monkeypatch):
 async def test_simple_predict_not_found(monkeypatch):
     """Проверяет 404 при отсутствии объявления."""
     missing_item_id = new_id()
+    captured = []
 
     class DummyRepo:
         async def select_advert(self, _item_id):
             return None
 
     monkeypatch.setattr(predict_router.prediction, "advertisement_repo", DummyRepo())
+    monkeypatch.setattr(
+        predict_router.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
+    )
 
     with pytest.raises(HTTPException) as exc_info:
         await predict_router.simple_predict(missing_item_id, AUTHENTICATED_ACCOUNT)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Advertisement not found"
+    assert len(captured) == 1
+    assert captured[0][1]["extras"] == {"item_id": missing_item_id}
 
 
 async def test_simple_predict_returns_from_cache_without_db_and_model(monkeypatch):
@@ -353,18 +379,26 @@ async def test_moderation_result_completed(monkeypatch):
 
 async def test_moderation_result_not_found(monkeypatch):
     missing_task_id = new_id()
+    captured = []
 
     class DummyRepo:
         async def get_by_id(self, _task_id):
             return None
 
     monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(
+        predict_router.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
+    )
 
     with pytest.raises(HTTPException) as exc_info:
         await predict_router.moderation_result(missing_task_id, AUTHENTICATED_ACCOUNT)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Moderation task not found"
+    assert len(captured) == 1
+    assert captured[0][1]["extras"] == {"task_id": missing_task_id}
 
 
 async def test_moderation_result_returns_from_cache_without_db(monkeypatch):

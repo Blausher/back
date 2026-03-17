@@ -6,8 +6,9 @@ import uvicorn
 
 from app.clients.kafka import kafka_client
 from app.clients.postgres import close_pg_pool, init_pg_pool
-from app.routers import entities, predict, root
 from app.observability.middleware import PrometheusMiddleware
+from app.observability import sentry as sentry_observability
+from app.routers import entities, predict, root
 
 
 logging.basicConfig(level=logging.INFO)
@@ -24,13 +25,19 @@ async def lifespan(_: FastAPI):
         await close_pg_pool()
 
 
-app = FastAPI(lifespan=lifespan)
+def create_app() -> FastAPI:
+    sentry_observability.init_sentry_from_env()
+    app = FastAPI(lifespan=lifespan)
 
-app.include_router(root.router)
-app.include_router(predict.router)
-app.include_router(entities.router)
+    app.include_router(root.router)
+    app.include_router(predict.router)
+    app.include_router(entities.router)
 
-app.add_middleware(PrometheusMiddleware)
+    app.add_middleware(PrometheusMiddleware)
+    return app
+
+
+app = create_app()
 
 
 

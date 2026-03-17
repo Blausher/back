@@ -56,11 +56,18 @@ async def test_create_account_returns_409_for_duplicate_login(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_account_returns_500_when_storage_fails(monkeypatch):
+    captured = []
+
     class DummyAccountRepository:
         async def create(self, login: str, password: str) -> Account:
             raise StorageUnavailableError("Storage operation failed")
 
     monkeypatch.setattr(root_router, "account_repository", DummyAccountRepository())
+    monkeypatch.setattr(
+        root_router.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
+    )
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -71,6 +78,8 @@ async def test_create_account_returns_500_when_storage_fails(monkeypatch):
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Internal server error"
+    assert len(captured) == 1
+    assert captured[0][1]["extras"] == {"login": "tester"}
 
 
 @pytest.mark.parametrize(

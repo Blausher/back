@@ -3,6 +3,21 @@ import pytest
 from app import main
 
 
+def test_create_app_initializes_sentry(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        main.sentry_observability,
+        "init_sentry_from_env",
+        lambda: calls.append("sentry_init"),
+    )
+
+    app = main.create_app()
+
+    assert calls == ["sentry_init"]
+    assert app.router is not None
+
+
 @pytest.mark.asyncio
 async def test_lifespan_initializes_and_closes_shared_clients(monkeypatch):
     calls = []

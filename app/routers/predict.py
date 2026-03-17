@@ -16,10 +16,28 @@ from app.models.async_predict import (
     AsyncPredictResponse,
     ModerationResultResponse,
 )
+from app.observability import sentry as sentry_observability
 from app.services import moderation, prediction
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _capture_predict_exception(
+    exc: Exception,
+    *,
+    endpoint: str,
+    **extras: object,
+) -> None:
+    sentry_observability.capture_exception(
+        exc,
+        tags={
+            "component": "api",
+            "router": "predict",
+            "endpoint": endpoint,
+        },
+        extras=extras,
+    )
 
 
 @router.post("/predict")
@@ -33,16 +51,34 @@ async def predict(
     try:
         return prediction.predict_advertisement(advertisement)
     except ModelNotLoadedError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="predict",
+            item_id=advertisement.item_id,
+            seller_id=advertisement.seller_id,
+        )
         raise HTTPException(
             status_code=503,
             detail="Model is not loaded",
         ) from exc
     except ModelInferenceError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="predict",
+            item_id=advertisement.item_id,
+            seller_id=advertisement.seller_id,
+        )
         raise HTTPException(
             status_code=500,
             detail="Model inference failed",
         ) from exc
     except moderation.BusinessLogicError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="predict",
+            item_id=advertisement.item_id,
+            seller_id=advertisement.seller_id,
+        )
         raise HTTPException(
             status_code=500,
             detail="Business logic prediction failed",
@@ -60,20 +96,45 @@ async def simple_predict(
     try:
         return await prediction.simple_predict_by_item_id(item_id)
     except AdvertisementNotFoundError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="simple_predict",
+            item_id=item_id,
+        )
         raise HTTPException(status_code=404, detail="Advertisement not found") from exc
     except StorageUnavailableError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="simple_predict",
+            item_id=item_id,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
     except ModelNotLoadedError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="simple_predict",
+            item_id=item_id,
+        )
         raise HTTPException(
             status_code=503,
             detail="Model is not loaded",
         ) from exc
     except ModelInferenceError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="simple_predict",
+            item_id=item_id,
+        )
         raise HTTPException(
             status_code=500,
             detail="Model inference failed",
         ) from exc
     except moderation.BusinessLogicError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="simple_predict",
+            item_id=item_id,
+        )
         raise HTTPException(
             status_code=500,
             detail="Business logic prediction failed",
@@ -91,10 +152,25 @@ async def async_predict(
     try:
         return await moderation.request_moderation(payload.item_id)
     except AdvertisementNotFoundError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="async_predict",
+            item_id=payload.item_id,
+        )
         raise HTTPException(status_code=404, detail="Advertisement not found") from exc
     except StorageUnavailableError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="async_predict",
+            item_id=payload.item_id,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
     except moderation.ModerationRequestError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="async_predict",
+            item_id=payload.item_id,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
@@ -109,7 +185,17 @@ async def moderation_result(
     try:
         return await moderation.get_moderation_result(task_id)
     except ModerationTaskNotFoundError as exc:
+        _capture_predict_exception(
+            exc,
+            endpoint="moderation_result",
+            task_id=task_id,
+        )
         raise HTTPException(status_code=404, detail="Moderation task not found") from exc
     except StorageUnavailableError as exc:
         logger.exception("Get moderation result failed")
+        _capture_predict_exception(
+            exc,
+            endpoint="moderation_result",
+            task_id=task_id,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc

@@ -75,18 +75,26 @@ async def test_close_advertisement_not_found(monkeypatch):
 async def test_close_advertisement_storage_unavailable(monkeypatch):
     """Возвращает 500 при ошибке PostgreSQL в репозитории."""
     item_id = new_id()
+    captured = []
 
     class DummyRepo:
         async def close(self, _item_id):
             raise StorageUnavailableError("Storage operation failed")
 
     monkeypatch.setattr(entities_router, "advertisement_repo", DummyRepo())
+    monkeypatch.setattr(
+        entities_router.sentry_observability,
+        "capture_exception",
+        lambda exc, **kwargs: captured.append((exc, kwargs)),
+    )
 
     with pytest.raises(HTTPException) as exc:
         await entities_router.close_advertisement(CloseAdvertisementRequest(item_id=item_id))
 
     assert exc.value.status_code == 500
     assert exc.value.detail == "Internal server error"
+    assert len(captured) == 1
+    assert captured[0][1]["extras"] == {"item_id": item_id}
 
 
 @pytest.mark.asyncio

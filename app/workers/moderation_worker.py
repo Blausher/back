@@ -8,8 +8,10 @@ from typing import Any
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from app.clients.model import ModelClient, ModelNotLoadedError
+from app.errors import AdvertisementNotFoundError
 from app.models.advertisement import Advertisement
 from app.observability.metrics import PREDICTIONS_TOTAL
+from app.observability import sentry as sentry_observability
 from app.repositories.advertisements import AdvertisementRepository
 from app.repositories.moderation_results import ModerationResultRepository
 from app.repositories.processed_events import ProcessedEventRepository
@@ -110,6 +112,8 @@ class ModerationWorker:
                 error_message="Retry limit exceeded before processing",
                 payload=payload,
                 retry_count=initial_retry_count,
+                stage="retry_limit",
+                exc=RuntimeError("Retry limit exceeded before processing"),
             )
             return
         pending_task_id: int | None | object = _UNSET
@@ -127,6 +131,8 @@ class ModerationWorker:
                         attempt=attempt,
                         error_message=self._compose_error_message("Pending task lookup failed", exc),
                         temporary=True,
+                        stage="load_pending_task",
+                        exc=exc,
                     )
                     if should_retry:
                         continue
@@ -156,6 +162,9 @@ class ModerationWorker:
                         attempt=attempt,
                         error_message=self._compose_error_message("Idempotency persistence failed", exc),
                         temporary=True,
+                        stage="register_event",
+                        exc=exc,
+                        task_id=pending_task_id if isinstance(pending_task_id, int) else None,
                     )
                     if should_retry:
                         continue
@@ -180,6 +189,9 @@ class ModerationWorker:
                     attempt=attempt,
                     error_message=self._compose_error_message("Database read failed", exc),
                     temporary=True,
+                    stage="load_advertisement",
+                    exc=exc,
+                    task_id=pending_task_id if isinstance(pending_task_id, int) else None,
                 )
                 if should_retry:
                     continue
@@ -191,6 +203,9 @@ class ModerationWorker:
                     error_message="Advertisement not found",
                     payload=payload,
                     retry_count=attempt,
+                    stage="load_advertisement",
+                    exc=AdvertisementNotFoundError("Advertisement not found"),
+                    task_id=pending_task_id if isinstance(pending_task_id, int) else None,
                 )
                 return
 
@@ -204,6 +219,9 @@ class ModerationWorker:
                     attempt=attempt,
                     error_message=self._compose_error_message("Prediction failed", exc),
                     temporary=self._is_temporary_prediction_error(exc),
+                    stage="predict",
+                    exc=exc,
+                    task_id=pending_task_id if isinstance(pending_task_id, int) else None,
                 )
                 if should_retry:
                     continue
@@ -219,6 +237,9 @@ class ModerationWorker:
                     attempt=attempt,
                     error_message=self._compose_error_message("Failed to update moderation result", exc),
                     temporary=True,
+                    stage="mark_completed",
+                    exc=exc,
+                    task_id=pending_task_id if isinstance(pending_task_id, int) else None,
                 )
                 if should_retry:
                     continue
@@ -244,7 +265,18 @@ class ModerationWorker:
         error_message: str,
         payload: bytes,
         retry_count: int | None = None,
+        stage: str = "processing",
+        exc: Exception | None = None,
+        task_id: int | None = None,
     ) -> None:
+        self._capture_terminal_error(
+            exc or RuntimeError(error_message),
+            item_id=item_id,
+            task_id=task_id,
+            retry_count=retry_count,
+            stage=stage,
+            error_message=error_message,
+        )
         try:
             task_id = await self.moderation_result_repo.mark_failed(item_id, error_message)
         except Exception:
@@ -266,6 +298,9 @@ class ModerationWorker:
         attempt: int,
         error_message: str,
         temporary: bool,
+        stage: str,
+        exc: Exception | None = None,
+        task_id: int | None = None,
     ) -> bool:
         if temporary and attempt < self.max_attempts:
             logger.warning(
@@ -284,6 +319,9 @@ class ModerationWorker:
             error_message=error_message,
             payload=payload,
             retry_count=attempt,
+            stage=stage,
+            exc=exc,
+            task_id=task_id,
         )
         return False
 
@@ -323,6 +361,31 @@ class ModerationWorker:
     @staticmethod
     def _is_temporary_prediction_error(exc: Exception) -> bool:
         return isinstance(exc, ModelNotLoadedError)
+
+    @staticmethod
+    def _capture_terminal_error(
+        exc: Exception,
+        *,
+        item_id: int,
+        stage: str,
+        retry_count: int | None,
+        error_message: str,
+        task_id: int | None = None,
+    ) -> None:
+        sentry_observability.capture_exception(
+            exc,
+            tags={
+                "component": "worker",
+                "worker": "moderation",
+                "stage": stage,
+            },
+            extras={
+                "item_id": item_id,
+                "task_id": task_id,
+                "retry_count": retry_count,
+                "error_message": error_message,
+            },
+        )
 
     async def _send_to_dlq(
         self,
@@ -403,6 +466,7 @@ class ModerationWorker:
 
 async def main() -> None:
     """Точка входа: создает и запускает moderation worker."""
+    sentry_observability.init_sentry_from_env()
     worker = ModerationWorker()
     await worker.run()
 

@@ -16,6 +16,32 @@ docker compose up -d --build
 - Prometheus: `http://localhost:9090/`
 - Grafana: `http://localhost:3000/`
 
+### Sentry
+Sentry в этом проекте нужен для сбора ошибок из API и Kafka worker в одном месте. Он помогает быстро понять, на каком эндпоинте или шаге воркера произошел сбой, с какими `item_id` или `task_id`, и увидеть stack trace вместе с контекстом запроса.
+
+Интеграция отключена по умолчанию. Для включения передайте DSN через переменные окружения, которые уже проброшены в `api` и `worker`:
+
+```bash
+export SENTRY_DSN="https://<key>@sentry.io/<project>"
+export SENTRY_ENV="local"
+export SENTRY_RELEASE="back-dev"
+docker compose up -d --build
+```
+
+В Sentry будут отправляться ошибки бизнес-логики и инфраструктуры, которые роутеры переводят в ответы API, а также terminal-failure сценарии воркера после исчерпания retry. Обычные пользовательские ошибки вроде `401`, `403` и `409` туда не отправляются, чтобы не засорять поток событий.
+
+Минимальная проверка:
+```bash
+# 1. создать аккаунт и залогиниться
+curl -X POST http://localhost:8003/accounts -H 'content-type: application/json' -d '{"login":"tester","password":"secret"}'
+curl -i -X POST http://localhost:8003/login -H 'content-type: application/json' -d '{"login":"tester","password":"secret"}'
+
+# 2. вызвать бизнес-ошибку, которая попадет в Sentry
+curl -X GET 'http://localhost:8003/simple_predict?item_id=999999' --cookie 'x-user-token=<jwt>'
+```
+
+После этого в Sentry появится событие с `AdvertisementNotFoundError` и контекстом эндпоинта `simple_predict`.
+
 Остановить:
 ```bash
 docker compose down

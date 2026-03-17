@@ -67,6 +67,9 @@ services:
       MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-moderation-model}
       MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-moderation-model}
       MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENV: ${SENTRY_ENV:-local}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     volumes:
       - mlflow_db:/mlflow
       - mlflow_artifacts:/app/mlruns
@@ -96,6 +99,9 @@ services:
       MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-moderation-model}
       MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-moderation-model}
       MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENV: ${SENTRY_ENV:-local}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     volumes:
       - mlflow_db:/mlflow
       - mlflow_artifacts:/app/mlruns

@@ -13,6 +13,7 @@ from app.errors import (
 from app.models.account_create import AccountCreateRequest
 from app.models.account_public import AccountPublic
 from app.models.login import LoginRequest
+from app.observability import sentry as sentry_observability
 from app.repositories.accounts import AccountRepository
 from app.services.auth import AuthService
 
@@ -20,6 +21,23 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 auth_service = AuthService()
 account_repository = AccountRepository()
+
+
+def _capture_root_exception(
+    exc: Exception,
+    *,
+    endpoint: str,
+    **extras: object,
+) -> None:
+    sentry_observability.capture_exception(
+        exc,
+        tags={
+            "component": "api",
+            "router": "root",
+            "endpoint": endpoint,
+        },
+        extras=extras,
+    )
 
 
 @router.get("/")
@@ -39,6 +57,7 @@ async def create_account(dto: AccountCreateRequest) -> AccountPublic:
         ) from exc
     except StorageUnavailableError as exc:
         logger.exception("Create account failed")
+        _capture_root_exception(exc, endpoint="create_account", login=dto.login)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
