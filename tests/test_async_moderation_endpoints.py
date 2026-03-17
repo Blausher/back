@@ -3,26 +3,7 @@ import pytest
 from app.models.async_predict import AsyncPredictRequest
 from app.models.moderation_result import ModerationResult
 from app.routers import predict as predict_router
-
-
-@pytest.fixture(autouse=True)
-def cache_storage_stub(monkeypatch):
-    class DummyPredictionCache:
-        async def get(self, _item_id):
-            return None
-
-        async def set(self, _item_id, _row):
-            return None
-
-    class DummyModerationCache:
-        async def get(self, _task_id):
-            return None
-
-        async def set(self, _task_id, _row):
-            return None
-
-    monkeypatch.setattr(predict_router, "prediction_cache_storage", DummyPredictionCache())
-    monkeypatch.setattr(predict_router, "moderation_result_cache_storage", DummyModerationCache())
+from app.services import moderation
 
 
 @pytest.mark.asyncio
@@ -63,9 +44,9 @@ async def test_async_predict_creates_task_and_sends_kafka(monkeypatch):
         async def send_moderation_request(self, item_id):
             sent_messages.append(item_id)
 
-    monkeypatch.setattr(predict_router, "advertisement_repo", DummyAdsRepo())
-    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyModerationRepo())
-    monkeypatch.setattr(predict_router, "kafka_client", DummyKafkaClient())
+    monkeypatch.setattr(moderation, "advertisement_repo", DummyAdsRepo())
+    monkeypatch.setattr(moderation, "moderation_result_repo", DummyModerationRepo())
+    monkeypatch.setattr(moderation, "kafka_client", DummyKafkaClient())
 
     response = await predict_router.async_predict(AsyncPredictRequest(item_id=42))
 
@@ -81,6 +62,13 @@ async def test_async_predict_creates_task_and_sends_kafka(monkeypatch):
 @pytest.mark.asyncio
 async def test_moderation_result_returns_failed_status(monkeypatch):
     """Проверяет выдачу статуса failed из moderation_result."""
+    class DummyCache:
+        async def get(self, _task_id):
+            return None
+
+        async def set(self, _task_id, _row):
+            return None
+
     class DummyRepo:
         async def get_by_id(self, _task_id):
             return ModerationResult.model_validate(
@@ -96,7 +84,8 @@ async def test_moderation_result_returns_failed_status(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(moderation, "moderation_result_cache_storage", DummyCache())
+    monkeypatch.setattr(moderation, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(502)
 

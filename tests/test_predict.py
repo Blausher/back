@@ -47,7 +47,7 @@ def cache_storage_stub(monkeypatch):
 
     monkeypatch.setattr(predict_router.prediction, "prediction_cache_storage", DummyPredictionCache())
     monkeypatch.setattr(
-        predict_router.prediction,
+        predict_router.moderation,
         "moderation_result_cache_storage",
         DummyModerationCache(),
     )
@@ -292,7 +292,7 @@ async def test_moderation_result_pending(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(123, AUTHENTICATED_ACCOUNT)
 
@@ -320,7 +320,7 @@ async def test_moderation_result_completed(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(124, AUTHENTICATED_ACCOUNT)
 
@@ -337,7 +337,7 @@ async def test_moderation_result_not_found(monkeypatch):
         async def get_by_id(self, _task_id):
             return None
 
-    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
     with pytest.raises(HTTPException) as exc_info:
         await predict_router.moderation_result(999, AUTHENTICATED_ACCOUNT)
@@ -364,11 +364,11 @@ async def test_moderation_result_returns_from_cache_without_db(monkeypatch):
             raise AssertionError("DB should not be called on cache hit")
 
     monkeypatch.setattr(
-        predict_router.prediction,
+        predict_router.moderation,
         "moderation_result_cache_storage",
         DummyCache(),
     )
-    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(777, AUTHENTICATED_ACCOUNT)
 
@@ -406,11 +406,11 @@ async def test_moderation_result_cache_miss_saves_result(monkeypatch):
             )
 
     monkeypatch.setattr(
-        predict_router.prediction,
+        predict_router.moderation,
         "moderation_result_cache_storage",
         DummyCache(),
     )
-    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(778, AUTHENTICATED_ACCOUNT)
 

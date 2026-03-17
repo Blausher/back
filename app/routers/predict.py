@@ -2,7 +2,6 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 
-from app.clients.kafka import kafka_client
 from app.clients.model import ModelInferenceError, ModelNotLoadedError
 from app.dependencies import require_account
 from app.errors import (
@@ -17,14 +16,12 @@ from app.models.async_predict import (
     AsyncPredictResponse,
     ModerationResultResponse,
 )
-from app.repositories.advertisements import AdvertisementRepository
-from app.repositories.moderation_results import ModerationResultRepository
 from app.services import moderation, prediction
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-advertisement_repo = AdvertisementRepository()
-moderation_result_repo = ModerationResultRepository()
+
+
 @router.post("/predict")
 async def predict(
     advertisement: Advertisement,
@@ -92,29 +89,13 @@ async def async_predict(
     Создает задачу на модерацию объявления по item_id и отправляет запрос в Kafka очередь.
     """
     try:
-        advertisement = await advertisement_repo.select_advert(payload.item_id)
+        return await moderation.request_moderation(payload.item_id)
+    except AdvertisementNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Advertisement not found") from exc
     except StorageUnavailableError as exc:
         raise HTTPException(status_code=500, detail="Internal server error") from exc
-    if advertisement is None:
-        raise HTTPException(status_code=404, detail="Advertisement not found")
-
-    try:
-        moderation_result = await moderation_result_repo.create_pending(payload.item_id)
-    except StorageUnavailableError as exc:
-        logger.exception("Create moderation result failed")
+    except moderation.ModerationRequestError as exc:
         raise HTTPException(status_code=500, detail="Internal server error") from exc
-
-    try:
-        await kafka_client.send_moderation_request(payload.item_id)
-    except Exception as exc:
-        logger.exception("Kafka send failed")
-        raise HTTPException(status_code=500, detail="Internal server error") from exc
-
-    return {
-        "task_id": moderation_result.id,
-        "status": moderation_result.status,
-        "message": "Moderation request accepted",
-    }
 
 
 @router.get("/moderation_result/{task_id}", response_model=ModerationResultResponse)
@@ -126,7 +107,7 @@ async def moderation_result(
     Возвращает статус задачи модерации по task_id.
     """
     try:
-        return await prediction.get_moderation_result(task_id)
+        return await moderation.get_moderation_result(task_id)
     except ModerationTaskNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Moderation task not found") from exc
     except StorageUnavailableError as exc:
