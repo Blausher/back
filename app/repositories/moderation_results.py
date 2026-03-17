@@ -28,16 +28,14 @@ class ModerationResultStorage:
                 if existing is not None:
                     return dict(existing)
 
-                # Без явной сериализации: дедупликацию обеспечивает partial unique index.
-                # Редкая гонка: конфликт случился, но запись уже успела сменить статус;
-                # тогда повторяем попытку вставки.
-                for _ in range(2):
-                    record = await connection.fetchrow(insert_query, item_id)
-                    if record is not None:
-                        return dict(record)
-                    existing = await connection.fetchrow(get_existing_query, item_id)
-                    if existing is not None:
-                        return dict(existing)
+                # Если между initial SELECT и INSERT другой процесс уже создал pending,
+                # DO NOTHING вернет пустой RETURNING, и мы дочитаем уже созданную запись.
+                record = await connection.fetchrow(insert_query, item_id)
+                if record is not None:
+                    return dict(record)
+                existing = await connection.fetchrow(get_existing_query, item_id)
+                if existing is not None:
+                    return dict(existing)
                 raise StorageUnavailableError("Failed to create pending moderation result")
         except Exception as exc:
             raise StorageUnavailableError("Storage operation failed") from exc

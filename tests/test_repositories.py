@@ -210,6 +210,35 @@ async def test_moderation_result_create_pending_returns_existing_completed(monke
 
 
 @pytest.mark.asyncio
+async def test_moderation_result_create_pending_reads_existing_after_conflict(monkeypatch):
+    existing = {
+        "id": 323,
+        "item_id": 42,
+        "status": "pending",
+        "is_violation": None,
+        "probability": None,
+        "error_message": None,
+        "created_at": None,
+        "processed_at": None,
+    }
+    connection = SequencedConnection(rows=[None, None, existing])
+
+    @asynccontextmanager
+    async def conn_stub():
+        yield connection
+
+    monkeypatch.setattr(mr_repo, "get_pg_connection", conn_stub)
+
+    repo = mr_repo.ModerationResultRepository()
+    result = await repo.create_pending(42)
+
+    assert isinstance(result, ModerationResult)
+    assert result.id == 323
+    assert result.status == "pending"
+    assert len(connection.fetched) == 3
+
+
+@pytest.mark.asyncio
 async def test_moderation_result_get_pending_task_id(monkeypatch):
     connection = DummyConnection({"id": 777})
 
