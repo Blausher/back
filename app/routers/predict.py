@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 
-from app.clients.kafka import KafkaProducerClient
+from app.clients.kafka import kafka_client
 from app.clients.model import ModelInferenceError, ModelNotLoadedError
 from app.dependencies import require_account
 from app.errors import (
@@ -25,9 +25,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 advertisement_repo = AdvertisementRepository()
 moderation_result_repo = ModerationResultRepository()
-kafka_client = KafkaProducerClient()
-
-
 @router.post("/predict")
 async def predict(
     advertisement: Advertisement,
