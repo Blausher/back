@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from time import perf_counter
 from typing import Protocol
 
@@ -10,7 +11,7 @@ from app.observability.metrics import (
     PREDICTION_DURATION,
     PREDICTION_ERRORS_TOTAL,
 )
-from app.services.model import load_or_train_model
+from app.services.model import load_or_train_model, parse_bool_env
 
 
 class ModelClientError(RuntimeError):
@@ -37,14 +38,26 @@ class ModerationInput(Protocol):
 class ModelClient:
     """Клиент работы с моделью: загрузка, нормализация признаков, инференс."""
 
-    def __init__(self, model_path: str = "model.pkl") -> None:
+    def __init__(
+        self,
+        model_path: str = "model.pkl",
+        use_mlflow: bool | None = None,
+    ) -> None:
         self.model_path = model_path
+        self.use_mlflow = (
+            parse_bool_env(os.getenv("USE_MLFLOW"), default=False)
+            if use_mlflow is None
+            else use_mlflow
+        )
         self._model = None
 
     def load(self) -> None:
         """Загружает модель в память."""
         try:
-            self._model = load_or_train_model(self.model_path)
+            self._model = load_or_train_model(
+                self.model_path,
+                use_mlflow=self.use_mlflow,
+            )
         except Exception as exc:
             raise ModelNotLoadedError("Model is not loaded") from exc
 

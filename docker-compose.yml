@@ -62,6 +62,14 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB: 0
+      USE_MLFLOW: ${USE_MLFLOW:-false}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
+      MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-moderation-model}
+      MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-moderation-model}
+      MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
+    volumes:
+      - mlflow_db:/mlflow
+      - mlflow_artifacts:/app/mlruns
     ports:
       - "8003:8003"
     depends_on:
@@ -83,6 +91,14 @@ services:
       POSTGRES_DB: back
       KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
       KAFKA_MODERATION_GROUP_ID: moderation-worker
+      USE_MLFLOW: ${USE_MLFLOW:-false}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
+      MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-moderation-model}
+      MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-moderation-model}
+      MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
+    volumes:
+      - mlflow_db:/mlflow
+      - mlflow_artifacts:/app/mlruns
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,3 +149,5 @@ volumes:
   pgdata:
   redisdata:
   grafana_data:
+  mlflow_db:
+  mlflow_artifacts:

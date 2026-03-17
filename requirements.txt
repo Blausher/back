@@ -9,3 +9,4 @@ aiokafka>=0.13.0
 redis>=7.2.0
 prometheus-client>=0.24.1
 pyjwt
+mlflow>=3.10.1
