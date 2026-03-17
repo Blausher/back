@@ -22,8 +22,16 @@ class AdvertisementAlreadyExistsError(StorageError):
     """Объявление уже существует."""
 
 
+class AdvertisementNotFoundError(AppError):
+    """Объявление не найдено."""
+
+
 class AccountAlreadyExistsError(StorageError):
     """Аккаунт уже существует."""
+
+
+class ModerationTaskNotFoundError(AppError):
+    """Задача модерации не найдена."""
 
 
 class AuthenticationError(AppError):

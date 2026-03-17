@@ -45,8 +45,14 @@ def cache_storage_stub(monkeypatch):
         async def set(self, _task_id, _row):
             return None
 
-    monkeypatch.setattr(predict_router, "prediction_cache_storage", DummyPredictionCache())
-    monkeypatch.setattr(predict_router, "moderation_result_cache_storage", DummyModerationCache())
+    monkeypatch.setattr(predict_router.prediction, "prediction_cache_storage", DummyPredictionCache())
+    monkeypatch.setattr(
+        predict_router.prediction,
+        "moderation_result_cache_storage",
+        DummyModerationCache(),
+    )
+
+
 async def test_predict_positive_valid(monkeypatch):
     '''
     положительный результат предсказания (валидное объявление)
@@ -190,7 +196,7 @@ async def test_simple_predict_success(monkeypatch):
         async def select_advert(self, _item_id):
             return Advertisement.model_validate(VALID_PAYLOAD)
 
-    monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.prediction, "advertisement_repo", DummyRepo())
 
     response = await predict_router.simple_predict(42, AUTHENTICATED_ACCOUNT)
 
@@ -204,7 +210,7 @@ async def test_simple_predict_not_found(monkeypatch):
         async def select_advert(self, _item_id):
             return None
 
-    monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.prediction, "advertisement_repo", DummyRepo())
 
     with pytest.raises(HTTPException) as exc_info:
         await predict_router.simple_predict(404, AUTHENTICATED_ACCOUNT)
@@ -228,8 +234,8 @@ async def test_simple_predict_returns_from_cache_without_db_and_model(monkeypatc
     def fail_model(_ad):
         raise AssertionError("Model should not be called")
 
-    monkeypatch.setattr(predict_router, "prediction_cache_storage", DummyCache())
-    monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.prediction, "prediction_cache_storage", DummyCache())
+    monkeypatch.setattr(predict_router.prediction, "advertisement_repo", DummyRepo())
     monkeypatch.setattr(
         predict_router.prediction.model_client,
         "predict_probability",
@@ -255,8 +261,8 @@ async def test_simple_predict_cache_miss_saves_result(monkeypatch):
         async def select_advert(self, _item_id):
             return Advertisement.model_validate(VALID_PAYLOAD)
 
-    monkeypatch.setattr(predict_router, "prediction_cache_storage", DummyCache())
-    monkeypatch.setattr(predict_router, "advertisement_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.prediction, "prediction_cache_storage", DummyCache())
+    monkeypatch.setattr(predict_router.prediction, "advertisement_repo", DummyRepo())
     monkeypatch.setattr(
         predict_router.prediction.model_client,
         "predict_probability",
@@ -286,7 +292,7 @@ async def test_moderation_result_pending(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(123, AUTHENTICATED_ACCOUNT)
 
@@ -314,7 +320,7 @@ async def test_moderation_result_completed(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(124, AUTHENTICATED_ACCOUNT)
 
@@ -331,7 +337,7 @@ async def test_moderation_result_not_found(monkeypatch):
         async def get_by_id(self, _task_id):
             return None
 
-    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
 
     with pytest.raises(HTTPException) as exc_info:
         await predict_router.moderation_result(999, AUTHENTICATED_ACCOUNT)
@@ -357,8 +363,12 @@ async def test_moderation_result_returns_from_cache_without_db(monkeypatch):
         async def get_by_id(self, _task_id):
             raise AssertionError("DB should not be called on cache hit")
 
-    monkeypatch.setattr(predict_router, "moderation_result_cache_storage", DummyCache())
-    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(
+        predict_router.prediction,
+        "moderation_result_cache_storage",
+        DummyCache(),
+    )
+    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(777, AUTHENTICATED_ACCOUNT)
 
@@ -395,8 +405,12 @@ async def test_moderation_result_cache_miss_saves_result(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(predict_router, "moderation_result_cache_storage", DummyCache())
-    monkeypatch.setattr(predict_router, "moderation_result_repo", DummyRepo())
+    monkeypatch.setattr(
+        predict_router.prediction,
+        "moderation_result_cache_storage",
+        DummyCache(),
+    )
+    monkeypatch.setattr(predict_router.prediction, "moderation_result_repo", DummyRepo())
 
     response = await predict_router.moderation_result(778, AUTHENTICATED_ACCOUNT)
 
