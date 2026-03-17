@@ -4,6 +4,7 @@ from app.models.async_predict import AsyncPredictRequest
 from app.models.moderation_result import ModerationResult
 from app.routers import predict as predict_router
 from app.services import moderation
+from tests.id_factory import new_id
 
 
 @pytest.mark.asyncio
@@ -11,11 +12,14 @@ async def test_async_predict_creates_task_and_sends_kafka(monkeypatch):
     """Проверяет создание pending-задачи и отправку сообщения в Kafka."""
     created_tasks = []
     sent_messages = []
+    seller_id = new_id()
+    item_id = new_id()
+    task_id = new_id()
 
     class DummyAdsRepo:
         async def select_advert(self, item_id):
             return {
-                "seller_id": 1,
+                "seller_id": seller_id,
                 "is_verified_seller": True,
                 "item_id": item_id,
                 "name": "Desk",
@@ -29,7 +33,7 @@ async def test_async_predict_creates_task_and_sends_kafka(monkeypatch):
             created_tasks.append(item_id)
             return ModerationResult.model_validate(
                 {
-                    "id": 501,
+                    "id": task_id,
                     "item_id": item_id,
                     "status": "pending",
                     "is_violation": None,
@@ -48,20 +52,23 @@ async def test_async_predict_creates_task_and_sends_kafka(monkeypatch):
     monkeypatch.setattr(moderation, "moderation_result_repo", DummyModerationRepo())
     monkeypatch.setattr(moderation, "kafka_client", DummyKafkaClient())
 
-    response = await predict_router.async_predict(AsyncPredictRequest(item_id=42))
+    response = await predict_router.async_predict(AsyncPredictRequest(item_id=item_id))
 
     assert response == {
-        "task_id": 501,
+        "task_id": task_id,
         "status": "pending",
         "message": "Moderation request accepted",
     }
-    assert created_tasks == [42]
-    assert sent_messages == [42]
+    assert created_tasks == [item_id]
+    assert sent_messages == [item_id]
 
 
 @pytest.mark.asyncio
 async def test_moderation_result_returns_failed_status(monkeypatch):
     """Проверяет выдачу статуса failed из moderation_result."""
+    item_id = new_id()
+    task_id = new_id()
+
     class DummyCache:
         async def get(self, _task_id):
             return None
@@ -73,8 +80,8 @@ async def test_moderation_result_returns_failed_status(monkeypatch):
         async def get_by_id(self, _task_id):
             return ModerationResult.model_validate(
                 {
-                    "id": 502,
-                    "item_id": 42,
+                    "id": task_id,
+                    "item_id": item_id,
                     "status": "failed",
                     "is_violation": None,
                     "probability": None,
@@ -87,10 +94,10 @@ async def test_moderation_result_returns_failed_status(monkeypatch):
     monkeypatch.setattr(moderation, "moderation_result_cache_storage", DummyCache())
     monkeypatch.setattr(moderation, "moderation_result_repo", DummyRepo())
 
-    response = await predict_router.moderation_result(502)
+    response = await predict_router.moderation_result(task_id)
 
     assert response == {
-        "task_id": 502,
+        "task_id": task_id,
         "status": "failed",
         "is_violation": None,
         "probability": None,

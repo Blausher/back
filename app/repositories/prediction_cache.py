@@ -8,6 +8,10 @@ from app.clients.redis import get_redis_connection
 
 @dataclass(frozen=True)
 class PredictionRedisStorage:
+    # Предсказание модели стабильно для конкретной версии объявления и не требует
+    # пересчета на каждом запросе, поэтому держим его в кэше сутки, чтобы снять
+    # нагрузку с модели и базы. Более длинный TTL повышает риск отдавать устаревший
+    # результат после изменений объявления
     _TTL: timedelta = timedelta(days=1)
     _KEY_PREFIX: str = "prediction"
 
@@ -38,7 +42,13 @@ class PredictionRedisStorage:
 
 @dataclass(frozen=True)
 class ModerationResultRedisStorage:
+    # Pending-статус нужен только как короткий буфер между созданием задачи и
+    # ответом воркера, поэтому 15 секунд хватит, чтобы повторные запросы
+    # не плодили дубли. 
     _PENDING_TTL: timedelta = timedelta(seconds=15)
+    # Terminal-результаты можно держать сутки по той же причине, что и prediction:
+    # они читаются чаще, чем меняются, и суточный TTL снижает число обращений к БД
+    # без заметного риска долго показывать неактуальные данные.
     _TERMINAL_TTL: timedelta = timedelta(days=1)
     _KEY_PREFIX: str = "moderation_result"
 

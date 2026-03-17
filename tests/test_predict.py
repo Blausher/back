@@ -8,19 +8,25 @@ from app.models.advertisement import Advertisement
 from app.models.moderation_result import ModerationResult
 from app.routers import predict as predict_router
 from app.services import moderation
+from tests.id_factory import new_id
 
-VALID_PAYLOAD = {
-    "seller_id": 1,
-    "is_verified_seller": False,
-    "item_id": 42,
-    "name": "Office chair",
-    "description": "Comfortable chair with wheels",
-    "category": 3,
-    "images_qty": 0,
-}
+
+def make_valid_payload(**overrides):
+    payload = {
+        "seller_id": new_id(),
+        "is_verified_seller": False,
+        "item_id": new_id(),
+        "name": "Office chair",
+        "description": "Comfortable chair with wheels",
+        "category": 3,
+        "images_qty": 0,
+    }
+    payload.update(overrides)
+    return payload
+
 
 AUTHENTICATED_ACCOUNT = Account(
-    id=1,
+    id=new_id(),
     login="tester",
     password="hashed-password",
     is_blocked=False,
@@ -63,7 +69,7 @@ async def test_predict_positive_valid(monkeypatch):
         lambda _ad: 0.87,
     )
 
-    payload = {**VALID_PAYLOAD, "is_verified_seller": True, "images_qty": 0}
+    payload = make_valid_payload(is_verified_seller=True, images_qty=0)
 
     response = await predict_router.predict(
         Advertisement.model_validate(payload),
@@ -84,7 +90,7 @@ async def test_predict_negative_invalid(monkeypatch):
         lambda _ad: 0.12,
     )
 
-    payload = {**VALID_PAYLOAD, "is_verified_seller": False, "images_qty": 0}
+    payload = make_valid_payload(is_verified_seller=False, images_qty=0)
 
     response = await predict_router.predict(
         Advertisement.model_validate(payload),
@@ -121,7 +127,7 @@ async def test_predict_validation_error_on_invalid_values(patch, _label):
     '''
     валидация значений (тип, содержимое)
     '''
-    payload = {**VALID_PAYLOAD, **patch}
+    payload = make_valid_payload(**patch)
 
     with pytest.raises(ValidationError):
         Advertisement.model_validate(payload)
@@ -132,7 +138,7 @@ async def test_predict_validation_error_on_missing_field(missing_field):
     '''
     валидация обязательных аргументов
     '''
-    payload = {**VALID_PAYLOAD}
+    payload = make_valid_payload()
     payload.pop(missing_field)
 
     with pytest.raises(ValidationError):
@@ -154,7 +160,7 @@ async def test_predict_business_logic_error(monkeypatch):
 
     with pytest.raises(HTTPException) as exc_info:
         await predict_router.predict(
-            Advertisement.model_validate(VALID_PAYLOAD),
+            Advertisement.model_validate(make_valid_payload()),
             AUTHENTICATED_ACCOUNT,
         )
 
@@ -175,7 +181,7 @@ async def test_predict_model_unavailable(monkeypatch):
 
     with pytest.raises(HTTPException) as exc_info:
         await predict_router.predict(
-            Advertisement.model_validate(VALID_PAYLOAD),
+            Advertisement.model_validate(make_valid_payload()),
             AUTHENTICATED_ACCOUNT,
         )
 
@@ -185,6 +191,8 @@ async def test_predict_model_unavailable(monkeypatch):
 
 async def test_simple_predict_success(monkeypatch):
     """Проверяет успешный simple_predict."""
+    advertisement = Advertisement.model_validate(make_valid_payload())
+
     monkeypatch.setattr(
         predict_router.prediction.model_client,
         "predict_probability",
@@ -194,11 +202,11 @@ async def test_simple_predict_success(monkeypatch):
 
     class DummyRepo:
         async def select_advert(self, _item_id):
-            return Advertisement.model_validate(VALID_PAYLOAD)
+            return advertisement
 
     monkeypatch.setattr(predict_router.prediction, "advertisement_repo", DummyRepo())
 
-    response = await predict_router.simple_predict(42, AUTHENTICATED_ACCOUNT)
+    response = await predict_router.simple_predict(advertisement.item_id, AUTHENTICATED_ACCOUNT)
 
     assert response["is_valid"] is True
     assert response["probability"] == 0.87
@@ -206,6 +214,8 @@ async def test_simple_predict_success(monkeypatch):
 
 async def test_simple_predict_not_found(monkeypatch):
     """Проверяет 404 при отсутствии объявления."""
+    missing_item_id = new_id()
+
     class DummyRepo:
         async def select_advert(self, _item_id):
             return None
@@ -213,13 +223,15 @@ async def test_simple_predict_not_found(monkeypatch):
     monkeypatch.setattr(predict_router.prediction, "advertisement_repo", DummyRepo())
 
     with pytest.raises(HTTPException) as exc_info:
-        await predict_router.simple_predict(404, AUTHENTICATED_ACCOUNT)
+        await predict_router.simple_predict(missing_item_id, AUTHENTICATED_ACCOUNT)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Advertisement not found"
 
 
 async def test_simple_predict_returns_from_cache_without_db_and_model(monkeypatch):
+    item_id = new_id()
+
     class DummyCache:
         async def get(self, _item_id):
             return {"is_valid": True, "probability": 0.99}
@@ -242,13 +254,14 @@ async def test_simple_predict_returns_from_cache_without_db_and_model(monkeypatc
         fail_model,
     )
 
-    response = await predict_router.simple_predict(42, AUTHENTICATED_ACCOUNT)
+    response = await predict_router.simple_predict(item_id, AUTHENTICATED_ACCOUNT)
 
     assert response == {"is_valid": True, "probability": 0.99}
 
 
 async def test_simple_predict_cache_miss_saves_result(monkeypatch):
     cache_set_calls = []
+    advertisement = Advertisement.model_validate(make_valid_payload())
 
     class DummyCache:
         async def get(self, _item_id):
@@ -259,7 +272,7 @@ async def test_simple_predict_cache_miss_saves_result(monkeypatch):
 
     class DummyRepo:
         async def select_advert(self, _item_id):
-            return Advertisement.model_validate(VALID_PAYLOAD)
+            return advertisement
 
     monkeypatch.setattr(predict_router.prediction, "prediction_cache_storage", DummyCache())
     monkeypatch.setattr(predict_router.prediction, "advertisement_repo", DummyRepo())
@@ -270,19 +283,22 @@ async def test_simple_predict_cache_miss_saves_result(monkeypatch):
     )
     monkeypatch.setattr(moderation, "predict_has_violations", lambda _ad: False)
 
-    response = await predict_router.simple_predict(42, AUTHENTICATED_ACCOUNT)
+    response = await predict_router.simple_predict(advertisement.item_id, AUTHENTICATED_ACCOUNT)
 
     assert response == {"is_valid": False, "probability": 0.77}
-    assert cache_set_calls == [(42, {"is_valid": False, "probability": 0.77})]
+    assert cache_set_calls == [(advertisement.item_id, {"is_valid": False, "probability": 0.77})]
 
 
 async def test_moderation_result_pending(monkeypatch):
+    item_id = new_id()
+    task_id = new_id()
+
     class DummyRepo:
         async def get_by_id(self, _task_id):
             return ModerationResult.model_validate(
                 {
-                    "id": 123,
-                    "item_id": 42,
+                    "id": task_id,
+                    "item_id": item_id,
                     "status": "pending",
                     "is_violation": None,
                     "probability": None,
@@ -294,10 +310,10 @@ async def test_moderation_result_pending(monkeypatch):
 
     monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
-    response = await predict_router.moderation_result(123, AUTHENTICATED_ACCOUNT)
+    response = await predict_router.moderation_result(task_id, AUTHENTICATED_ACCOUNT)
 
     assert response == {
-        "task_id": 123,
+        "task_id": task_id,
         "status": "pending",
         "is_violation": None,
         "probability": None,
@@ -305,12 +321,15 @@ async def test_moderation_result_pending(monkeypatch):
 
 
 async def test_moderation_result_completed(monkeypatch):
+    item_id = new_id()
+    task_id = new_id()
+
     class DummyRepo:
         async def get_by_id(self, _task_id):
             return ModerationResult.model_validate(
                 {
-                    "id": 124,
-                    "item_id": 42,
+                    "id": task_id,
+                    "item_id": item_id,
                     "status": "completed",
                     "is_violation": True,
                     "probability": 0.87,
@@ -322,10 +341,10 @@ async def test_moderation_result_completed(monkeypatch):
 
     monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
-    response = await predict_router.moderation_result(124, AUTHENTICATED_ACCOUNT)
+    response = await predict_router.moderation_result(task_id, AUTHENTICATED_ACCOUNT)
 
     assert response == {
-        "task_id": 124,
+        "task_id": task_id,
         "status": "completed",
         "is_violation": True,
         "probability": 0.87,
@@ -333,6 +352,8 @@ async def test_moderation_result_completed(monkeypatch):
 
 
 async def test_moderation_result_not_found(monkeypatch):
+    missing_task_id = new_id()
+
     class DummyRepo:
         async def get_by_id(self, _task_id):
             return None
@@ -340,17 +361,19 @@ async def test_moderation_result_not_found(monkeypatch):
     monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
     with pytest.raises(HTTPException) as exc_info:
-        await predict_router.moderation_result(999, AUTHENTICATED_ACCOUNT)
+        await predict_router.moderation_result(missing_task_id, AUTHENTICATED_ACCOUNT)
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Moderation task not found"
 
 
 async def test_moderation_result_returns_from_cache_without_db(monkeypatch):
+    task_id = new_id()
+
     class DummyCache:
         async def get(self, _task_id):
             return {
-                "task_id": 777,
+                "task_id": task_id,
                 "status": "completed",
                 "is_violation": True,
                 "probability": 0.88,
@@ -370,10 +393,10 @@ async def test_moderation_result_returns_from_cache_without_db(monkeypatch):
     )
     monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
-    response = await predict_router.moderation_result(777, AUTHENTICATED_ACCOUNT)
+    response = await predict_router.moderation_result(task_id, AUTHENTICATED_ACCOUNT)
 
     assert response == {
-        "task_id": 777,
+        "task_id": task_id,
         "status": "completed",
         "is_violation": True,
         "probability": 0.88,
@@ -382,6 +405,8 @@ async def test_moderation_result_returns_from_cache_without_db(monkeypatch):
 
 async def test_moderation_result_cache_miss_saves_result(monkeypatch):
     cache_set_calls = []
+    item_id = new_id()
+    task_id = new_id()
 
     class DummyCache:
         async def get(self, _task_id):
@@ -394,8 +419,8 @@ async def test_moderation_result_cache_miss_saves_result(monkeypatch):
         async def get_by_id(self, _task_id):
             return ModerationResult.model_validate(
                 {
-                    "id": 778,
-                    "item_id": 42,
+                    "id": task_id,
+                    "item_id": item_id,
                     "status": "failed",
                     "is_violation": None,
                     "probability": None,
@@ -412,19 +437,19 @@ async def test_moderation_result_cache_miss_saves_result(monkeypatch):
     )
     monkeypatch.setattr(predict_router.moderation, "moderation_result_repo", DummyRepo())
 
-    response = await predict_router.moderation_result(778, AUTHENTICATED_ACCOUNT)
+    response = await predict_router.moderation_result(task_id, AUTHENTICATED_ACCOUNT)
 
     assert response == {
-        "task_id": 778,
+        "task_id": task_id,
         "status": "failed",
         "is_violation": None,
         "probability": None,
     }
     assert cache_set_calls == [
         (
-            778,
+            task_id,
             {
-                "task_id": 778,
+                "task_id": task_id,
                 "status": "failed",
                 "is_violation": None,
                 "probability": None,

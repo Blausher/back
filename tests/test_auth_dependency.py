@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from app.dependencies import require_account
 from app.errors import AccountBlockedError, InvalidTokenError
 from app.models.account import Account
+from tests.id_factory import new_id
 
 
 def _build_request(cookie_header: str | None = None) -> Request:
@@ -22,7 +23,7 @@ def _build_request(cookie_header: str | None = None) -> Request:
 
 @pytest.mark.asyncio
 async def test_require_account_returns_account():
-    expected_account = Account(id=7, login="tester", password="hashed", is_blocked=False)
+    expected_account = Account(id=new_id(), login="tester", password="hashed", is_blocked=False)
 
     class DummyAuthService:
         async def verify(self, token: str) -> Account:

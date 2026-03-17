@@ -29,17 +29,16 @@ async def _timed_fetchrow(connection, query_type: str, query: str, *args):
 
 @dataclass(frozen=True)
 class AccountStorage:
-    async def create(self, login: str, password: str) -> Mapping[str, Any]:
-        """Создает аккаунт и сохраняет хеш пароля."""
+    async def create(self, login: str, password_hash: str) -> Mapping[str, Any]:
+        """Создает аккаунт и сохраняет переданный хеш пароля."""
         query = """
             INSERT INTO account (login, password)
             VALUES ($1, $2)
             RETURNING id, login, password, is_blocked
         """
-        hashed_password = _hash_password(password)
         try:
             async with get_pg_connection() as connection:
-                record = await _timed_fetchrow(connection, "insert", query, login, hashed_password) # хешируем пароль перед записью в бд
+                record = await _timed_fetchrow(connection, "insert", query, login, password_hash)
         except pg_exc.UniqueViolationError as exc:
             raise AccountAlreadyExistsError("Account already exists") from exc
         except Exception as exc:
@@ -93,18 +92,21 @@ class AccountStorage:
             return None
         return dict(record)
 
-    async def get_by_login_and_password(self, login: str, password: str) -> Mapping[str, Any] | None:
-        """Ищет аккаунт по логину и исходному паролю."""
+    async def get_by_login_and_password_hash(
+        self,
+        login: str,
+        password_hash: str,
+    ) -> Mapping[str, Any] | None:
+        """Ищет аккаунт по логину и уже вычисленному хешу пароля."""
         query = """
             SELECT id, login, password, is_blocked
             FROM account
             WHERE login = $1
               AND password = $2
         """
-        hashed_password = _hash_password(password)
         try:
             async with get_pg_connection() as connection:
-                record = await _timed_fetchrow(connection, "select", query, login, hashed_password)
+                record = await _timed_fetchrow(connection, "select", query, login, password_hash)
         except Exception as exc:
             raise StorageUnavailableError("Storage operation failed") from exc
         if record is None:
@@ -118,7 +120,8 @@ class AccountRepository:
 
     async def create(self, login: str, password: str) -> Account:
         """Создает аккаунт через storage и возвращает модель."""
-        raw_account = await self.account_storage.create(login=login, password=password)
+        password_hash = _hash_password(password)
+        raw_account = await self.account_storage.create(login=login, password_hash=password_hash)
         return Account.model_validate(raw_account)
 
     async def get_by_id(self, account_id: int) -> Account | None:
@@ -141,9 +144,10 @@ class AccountRepository:
 
     async def get_by_login_and_password(self, login: str, password: str) -> Account | None:
         """Возвращает аккаунт по логину и паролю или None."""
-        raw_account = await self.account_storage.get_by_login_and_password(
+        password_hash = _hash_password(password)
+        raw_account = await self.account_storage.get_by_login_and_password_hash(
             login=login,
-            password=password,
+            password_hash=password_hash,
         )
         if raw_account is None:
             return None

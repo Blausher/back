@@ -11,6 +11,7 @@ from app.repositories.prediction_cache import (
     ModerationResultRedisStorage,
     PredictionRedisStorage,
 )
+from tests.id_factory import new_id
 
 
 @pytest.mark.asyncio
@@ -32,15 +33,16 @@ async def test_prediction_storage_set_uses_pipeline_and_expected_args(monkeypatc
 
     storage = PredictionRedisStorage()
     payload = {"is_valid": True, "probability": 0.91}
+    row_id = new_id()
 
-    await storage.set(42, payload)
+    await storage.set(row_id, payload)
 
     connection.pipeline.assert_called_once_with()
     pipeline.set.assert_called_once()
-    pipeline.expire.assert_called_once_with("prediction:42", 86400)
+    pipeline.expire.assert_called_once_with(f"prediction:{row_id}", 86400)
     pipeline.execute.assert_awaited_once()
     set_kwargs = pipeline.set.call_args.kwargs
-    assert set_kwargs["name"] == "prediction:42"
+    assert set_kwargs["name"] == f"prediction:{row_id}"
     assert json.loads(set_kwargs["value"]) == payload
 
 
@@ -58,13 +60,14 @@ async def test_prediction_storage_get_and_delete_use_expected_keys(monkeypatch):
     monkeypatch.setattr(cache_module, "get_redis_connection", fake_redis_connection)
 
     storage = PredictionRedisStorage()
+    row_id = new_id()
 
-    row = await storage.get(17)
-    await storage.delete(17)
+    row = await storage.get(row_id)
+    await storage.delete(row_id)
 
     assert row == {"is_valid": False, "probability": 0.12}
-    connection.get.assert_awaited_once_with("prediction:17")
-    connection.delete.assert_awaited_once_with("prediction:17")
+    connection.get.assert_awaited_once_with(f"prediction:{row_id}")
+    connection.delete.assert_awaited_once_with(f"prediction:{row_id}")
 
 
 @pytest.mark.asyncio
@@ -85,10 +88,14 @@ async def test_moderation_storage_set_uses_pending_ttl(monkeypatch):
     monkeypatch.setattr(cache_module, "get_redis_connection", fake_redis_connection)
 
     storage = ModerationResultRedisStorage()
+    task_id = new_id()
 
-    await storage.set(501, {"task_id": 501, "status": "pending", "probability": None, "is_violation": None})
+    await storage.set(
+        task_id,
+        {"task_id": task_id, "status": "pending", "probability": None, "is_violation": None},
+    )
 
-    pipeline.expire.assert_called_once_with("moderation_result:501", 15)
+    pipeline.expire.assert_called_once_with(f"moderation_result:{task_id}", 15)
     pipeline.execute.assert_awaited_once()
 
 
@@ -110,10 +117,14 @@ async def test_moderation_storage_set_uses_terminal_ttl(monkeypatch):
     monkeypatch.setattr(cache_module, "get_redis_connection", fake_redis_connection)
 
     storage = ModerationResultRedisStorage()
+    task_id = new_id()
 
-    await storage.set(502, {"task_id": 502, "status": "completed", "probability": 0.77, "is_violation": True})
+    await storage.set(
+        task_id,
+        {"task_id": task_id, "status": "completed", "probability": 0.77, "is_violation": True},
+    )
 
-    pipeline.expire.assert_called_once_with("moderation_result:502", 86400)
+    pipeline.expire.assert_called_once_with(f"moderation_result:{task_id}", 86400)
     pipeline.execute.assert_awaited_once()
 
 

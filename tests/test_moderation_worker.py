@@ -2,6 +2,7 @@ import pytest
 
 from app.models.advertisement import Advertisement
 from app.workers import moderation_worker as mw
+from tests.id_factory import new_id
 
 
 class DummyConsumer:
@@ -56,18 +57,20 @@ class DummyAdvertisementRepo:
 class DummyModerationResultRepo:
     def __init__(
         self,
-        pending_task_id=10,
+        pending_task_id=None,
         get_pending_exc: Exception | None = None,
-        mark_completed_result=55,
+        mark_completed_result=None,
         mark_completed_exc: Exception | None = None,
-        mark_failed_result=1,
+        mark_failed_result=None,
         mark_failed_exc: Exception | None = None,
     ):
-        self.pending_task_id = pending_task_id
+        self.pending_task_id = pending_task_id if pending_task_id is not None else new_id()
         self.get_pending_exc = get_pending_exc
-        self.mark_completed_result = mark_completed_result
+        self.mark_completed_result = (
+            mark_completed_result if mark_completed_result is not None else new_id()
+        )
         self.mark_completed_exc = mark_completed_exc
-        self.mark_failed_result = mark_failed_result
+        self.mark_failed_result = mark_failed_result if mark_failed_result is not None else new_id()
         self.mark_failed_exc = mark_failed_exc
         self.pending_calls = []
         self.completed_calls = []
@@ -105,7 +108,9 @@ class DummyProcessedEventRepo:
         return self.first_time
 
 
-def _advertisement(item_id=42, seller_id=7, is_verified_seller=False, images_qty=1):
+def _advertisement(item_id=None, seller_id=None, is_verified_seller=False, images_qty=1):
+    item_id = item_id if item_id is not None else new_id()
+    seller_id = seller_id if seller_id is not None else new_id()
     return Advertisement.model_validate(
         {
             "item_id": item_id,
@@ -149,6 +154,7 @@ def _build_worker(
 @pytest.mark.asyncio
 async def test_handle_message_marks_failed_and_sends_dlq_when_advert_not_found(monkeypatch):
     """Проверяет, что отсутствие объявления приводит к failed и отправке в DLQ."""
+    item_id = new_id()
     ad_repo = DummyAdvertisementRepo(advertisement=None)
     moderation_repo = DummyModerationResultRepo()
     processed_event_repo = DummyProcessedEventRepo(first_time=True)
@@ -170,11 +176,11 @@ async def test_handle_message_marks_failed_and_sends_dlq_when_advert_not_found(m
     worker._send_to_dlq = fake_send_to_dlq
     monkeypatch.setattr(mw.asyncio, "sleep", fake_sleep)
 
-    payload = b'{"item_id": 42}'
+    payload = f'{{"item_id": {item_id}}}'.encode("utf-8")
     await worker._handle_message(payload)
 
-    assert ad_repo.calls == [42]
-    assert moderation_repo.failed_calls == [(42, "Advertisement not found")]
+    assert ad_repo.calls == [item_id]
+    assert moderation_repo.failed_calls == [(item_id, "Advertisement not found")]
     assert dlq_events == [("Advertisement not found", payload, 1)]
     assert sleep_calls == []
 
@@ -182,8 +188,11 @@ async def test_handle_message_marks_failed_and_sends_dlq_when_advert_not_found(m
 @pytest.mark.asyncio
 async def test_handle_message_retries_temporary_prediction_error_then_sends_dlq(monkeypatch):
     """Проверяет 3 попытки для временной ошибки модели и отправку в DLQ после исчерпания."""
-    ad_repo = DummyAdvertisementRepo(advertisement=_advertisement())
+    item_id = new_id()
+    pending_task_id = new_id()
+    ad_repo = DummyAdvertisementRepo(advertisement=_advertisement(item_id=item_id))
     moderation_repo = DummyModerationResultRepo()
+    moderation_repo.pending_task_id = pending_task_id
     processed_event_repo = DummyProcessedEventRepo(first_time=True)
     worker = _build_worker(
         monkeypatch,
@@ -210,14 +219,14 @@ async def test_handle_message_retries_temporary_prediction_error_then_sends_dlq(
     worker._send_to_dlq = fake_send_to_dlq
     monkeypatch.setattr(mw.asyncio, "sleep", fake_sleep)
 
-    payload = b'{"item_id": 42}'
+    payload = f'{{"item_id": {item_id}}}'.encode("utf-8")
     await worker._handle_message(payload)
 
-    assert moderation_repo.pending_calls == [42]
-    assert processed_event_repo.calls == [("moderation:42:10", 42, 10)]
+    assert moderation_repo.pending_calls == [item_id]
+    assert processed_event_repo.calls == [(f"moderation:{item_id}:{pending_task_id}", item_id, pending_task_id)]
     assert predict_attempts == ["predict", "predict", "predict"]
     assert moderation_repo.completed_calls == []
-    assert moderation_repo.failed_calls == [(42, "Prediction failed: Model is not loaded")]
+    assert moderation_repo.failed_calls == [(item_id, "Prediction failed: Model is not loaded")]
     assert dlq_events == [("Prediction failed: Model is not loaded", payload, 3)]
     assert sleep_calls == [7, 7]
 
@@ -225,8 +234,9 @@ async def test_handle_message_retries_temporary_prediction_error_then_sends_dlq(
 @pytest.mark.asyncio
 async def test_handle_message_retries_temporary_prediction_error_until_success(monkeypatch):
     """Проверяет, что временная ошибка модели может восстановиться до DLQ."""
-    ad_repo = DummyAdvertisementRepo(advertisement=_advertisement())
-    moderation_repo = DummyModerationResultRepo(mark_completed_result=55)
+    item_id = new_id()
+    ad_repo = DummyAdvertisementRepo(advertisement=_advertisement(item_id=item_id))
+    moderation_repo = DummyModerationResultRepo(mark_completed_result=new_id())
     processed_event_repo = DummyProcessedEventRepo(first_time=True)
     worker = _build_worker(
         monkeypatch,
@@ -255,11 +265,11 @@ async def test_handle_message_retries_temporary_prediction_error_until_success(m
     worker._send_to_dlq = fake_send_to_dlq
     monkeypatch.setattr(mw.asyncio, "sleep", fake_sleep)
 
-    payload = b'{"item_id": 42}'
+    payload = f'{{"item_id": {item_id}}}'.encode("utf-8")
     await worker._handle_message(payload)
 
     assert predict_attempts == ["predict", "predict", "predict"]
-    assert moderation_repo.completed_calls == [(42, True, 0.88)]
+    assert moderation_repo.completed_calls == [(item_id, True, 0.88)]
     assert moderation_repo.failed_calls == []
     assert dlq_events == []
     assert sleep_calls == [3, 3]
@@ -268,8 +278,11 @@ async def test_handle_message_retries_temporary_prediction_error_until_success(m
 @pytest.mark.asyncio
 async def test_handle_message_success_marks_completed_without_dlq(monkeypatch):
     """Проверяет happy path: completed без failed-обновления и без DLQ."""
-    ad_repo = DummyAdvertisementRepo(advertisement=_advertisement(is_verified_seller=True, images_qty=2))
-    moderation_repo = DummyModerationResultRepo(mark_completed_result=55)
+    item_id = new_id()
+    ad_repo = DummyAdvertisementRepo(
+        advertisement=_advertisement(item_id=item_id, is_verified_seller=True, images_qty=2)
+    )
+    moderation_repo = DummyModerationResultRepo(mark_completed_result=new_id())
     processed_event_repo = DummyProcessedEventRepo(first_time=True)
     worker = _build_worker(
         monkeypatch,
@@ -288,10 +301,10 @@ async def test_handle_message_success_marks_completed_without_dlq(monkeypatch):
     worker._predict = fake_predict
     worker._send_to_dlq = fake_send_to_dlq
 
-    payload = b'{"item_id": 42}'
+    payload = f'{{"item_id": {item_id}}}'.encode("utf-8")
     await worker._handle_message(payload)
 
-    assert moderation_repo.completed_calls == [(42, True, 0.91)]
+    assert moderation_repo.completed_calls == [(item_id, True, 0.91)]
     assert moderation_repo.failed_calls == []
     assert dlq_events == []
 
@@ -300,16 +313,17 @@ async def test_handle_message_success_marks_completed_without_dlq(monkeypatch):
 async def test_send_to_dlq_publishes_message(monkeypatch):
     """Проверяет контракт сообщения, публикуемого в moderation_dlq."""
     worker = _build_worker(monkeypatch)
+    item_id = new_id()
 
     await worker._send_to_dlq(
         error_message="Prediction failed",
-        payload=b'{"item_id": 100}',
+        payload=f'{{"item_id": {item_id}}}'.encode("utf-8"),
     )
 
     assert len(worker.producer.sent) == 1
     topic, message = worker.producer.sent[0]
     assert topic == "moderation_dlq"
-    assert message["original_message"] == {"item_id": 100}
+    assert message["original_message"] == {"item_id": item_id}
     assert message["error"] == "Prediction failed"
     assert message["retry_count"] == 1
     assert "timestamp" in message
@@ -320,10 +334,11 @@ async def test_send_to_dlq_publishes_message(monkeypatch):
 async def test_send_to_dlq_increments_retry_count(monkeypatch):
     """Проверяет инкремент retry_count при повторной отправке в DLQ."""
     worker = _build_worker(monkeypatch)
+    item_id = new_id()
 
     await worker._send_to_dlq(
         error_message="Prediction failed",
-        payload=b'{"item_id": 100, "retry_count": 2}',
+        payload=f'{{"item_id": {item_id}, "retry_count": 2}}'.encode("utf-8"),
     )
 
     _, message = worker.producer.sent[0]
@@ -334,10 +349,11 @@ async def test_send_to_dlq_increments_retry_count(monkeypatch):
 async def test_send_to_dlq_uses_explicit_retry_count(monkeypatch):
     """Проверяет, что явный retry_count не перезаписывается значением из payload."""
     worker = _build_worker(monkeypatch)
+    item_id = new_id()
 
     await worker._send_to_dlq(
         error_message="Prediction failed",
-        payload=b'{"item_id": 100, "retry_count": 1}',
+        payload=f'{{"item_id": {item_id}, "retry_count": 1}}'.encode("utf-8"),
         retry_count=3,
     )
 
@@ -348,7 +364,8 @@ async def test_send_to_dlq_uses_explicit_retry_count(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_message_skips_duplicate_event(monkeypatch):
     """Проверяет, что дубль события не обрабатывается повторно."""
-    ad_repo = DummyAdvertisementRepo(advertisement=_advertisement())
+    item_id = new_id()
+    ad_repo = DummyAdvertisementRepo(advertisement=_advertisement(item_id=item_id))
     moderation_repo = DummyModerationResultRepo()
     processed_event_repo = DummyProcessedEventRepo(first_time=False)
     worker = _build_worker(
@@ -364,7 +381,7 @@ async def test_handle_message_skips_duplicate_event(monkeypatch):
 
     worker._send_to_dlq = fake_send_to_dlq
 
-    payload = b'{"item_id": 42}'
+    payload = f'{{"item_id": {item_id}}}'.encode("utf-8")
     await worker._handle_message(payload)
 
     assert moderation_repo.completed_calls == []

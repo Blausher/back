@@ -52,7 +52,25 @@ def _new_login() -> str:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_account_repository_create_get_and_find_by_credentials():
+async def test_account_repository_create_returns_created_account():
+    await _require_live_postgres()
+    repo = AccountRepository()
+    login = _new_login()
+    password = "s3cret-password"
+
+    await _cleanup_account(login)
+    try:
+        created = await repo.create(login=login, password=password)
+
+        assert created.login == login
+        assert created.password != password
+    finally:
+        await _cleanup_account(login)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_account_repository_get_by_id_returns_created_account():
     await _require_live_postgres()
     repo = AccountRepository()
     login = _new_login()
@@ -62,15 +80,45 @@ async def test_account_repository_create_get_and_find_by_credentials():
     try:
         created = await repo.create(login=login, password=password)
         loaded = await repo.get_by_id(created.id)
-        found = await repo.get_by_login_and_password(login=login, password=password)
-        missing = await repo.get_by_login_and_password(login=login, password="wrong-password")
 
-        assert created.login == login
-        assert created.password != password
         assert loaded is not None
         assert loaded.id == created.id
+    finally:
+        await _cleanup_account(login)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_account_repository_get_by_login_and_password_returns_account_for_valid_password():
+    await _require_live_postgres()
+    repo = AccountRepository()
+    login = _new_login()
+    password = "s3cret-password"
+
+    await _cleanup_account(login)
+    try:
+        created = await repo.create(login=login, password=password)
+        found = await repo.get_by_login_and_password(login=login, password=password)
+
         assert found is not None
         assert found.id == created.id
+    finally:
+        await _cleanup_account(login)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_account_repository_get_by_login_and_password_returns_none_for_invalid_password():
+    await _require_live_postgres()
+    repo = AccountRepository()
+    login = _new_login()
+    password = "s3cret-password"
+
+    await _cleanup_account(login)
+    try:
+        await repo.create(login=login, password=password)
+        missing = await repo.get_by_login_and_password(login=login, password="wrong-password")
+
         assert missing is None
     finally:
         await _cleanup_account(login)
@@ -78,7 +126,7 @@ async def test_account_repository_create_get_and_find_by_credentials():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_account_repository_block_and_delete():
+async def test_account_repository_block_marks_account_as_blocked():
     await _require_live_postgres()
     repo = AccountRepository()
     login = _new_login()
@@ -86,16 +134,46 @@ async def test_account_repository_block_and_delete():
     await _cleanup_account(login)
     try:
         created = await repo.create(login=login, password="password")
-
         blocked = await repo.block(created.id)
-        deleted = await repo.delete(created.id)
-        loaded = await repo.get_by_id(created.id)
-        deleted_missing = await repo.delete(created.id)
 
         assert blocked is not None
         assert blocked.is_blocked is True
+    finally:
+        await _cleanup_account(login)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_account_repository_delete_removes_existing_account():
+    await _require_live_postgres()
+    repo = AccountRepository()
+    login = _new_login()
+
+    await _cleanup_account(login)
+    try:
+        created = await repo.create(login=login, password="password")
+        deleted = await repo.delete(created.id)
+        loaded = await repo.get_by_id(created.id)
+
         assert deleted is True
         assert loaded is None
+    finally:
+        await _cleanup_account(login)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_account_repository_delete_returns_false_for_missing_account():
+    await _require_live_postgres()
+    repo = AccountRepository()
+    login = _new_login()
+
+    await _cleanup_account(login)
+    try:
+        created = await repo.create(login=login, password="password")
+        await repo.delete(created.id)
+        deleted_missing = await repo.delete(created.id)
+
         assert deleted_missing is False
     finally:
         await _cleanup_account(login)

@@ -1,6 +1,7 @@
 import pytest
 
 from app.clients import kafka
+from tests.id_factory import new_id
 
 
 class DummyProducer:
@@ -23,6 +24,8 @@ class DummyProducer:
 @pytest.mark.asyncio
 async def test_kafka_client_reuses_started_producer(monkeypatch):
     created_producers = []
+    first_item_id = new_id()
+    second_item_id = new_id()
 
     def producer_factory(**kwargs):
         producer = DummyProducer(**kwargs)
@@ -33,14 +36,14 @@ async def test_kafka_client_reuses_started_producer(monkeypatch):
     monkeypatch.setattr(kafka, "AIOKafkaProducer", producer_factory)
 
     await client.start()
-    await client.send_moderation_request(42)
-    await client.send_moderation_request(43)
+    await client.send_moderation_request(first_item_id)
+    await client.send_moderation_request(second_item_id)
 
     assert len(created_producers) == 1
     assert created_producers[0].started is True
     assert created_producers[0].sent_messages[0][0] == "moderation"
-    assert created_producers[0].sent_messages[0][1]["item_id"] == 42
-    assert created_producers[0].sent_messages[1][1]["item_id"] == 43
+    assert created_producers[0].sent_messages[0][1]["item_id"] == first_item_id
+    assert created_producers[0].sent_messages[1][1]["item_id"] == second_item_id
 
 
 @pytest.mark.asyncio

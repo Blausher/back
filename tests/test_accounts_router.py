@@ -5,15 +5,18 @@ from app.errors import AccountAlreadyExistsError, StorageUnavailableError
 from app.main import app
 from app.models.account import Account
 from app.routers import root as root_router
+from tests.id_factory import new_id
 
 
 @pytest.mark.asyncio
 async def test_create_account_returns_created_account(monkeypatch):
+    account_id = new_id()
+
     class DummyAccountRepository:
         async def create(self, login: str, password: str) -> Account:
             assert login == "tester"
             assert password == "secret"
-            return Account(id=7, login=login, password="hashed-secret", is_blocked=False)
+            return Account(id=account_id, login=login, password="hashed-secret", is_blocked=False)
 
     monkeypatch.setattr(root_router, "account_repository", DummyAccountRepository())
 
@@ -26,7 +29,7 @@ async def test_create_account_returns_created_account(monkeypatch):
 
     assert response.status_code == 201
     assert response.json() == {
-        "id": 7,
+        "id": account_id,
         "login": "tester",
         "is_blocked": False,
     }
