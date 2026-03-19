@@ -46,6 +46,8 @@ def predict_advertisement(advertisement: Advertisement) -> dict:
 
 
 async def simple_predict_by_item_id(item_id: int) -> dict:
+    """Возвращает предсказание по `item_id`, сначала проверяя Redis-кэш."""
+
     cached_result = await _get_cached_prediction(item_id)
     if cached_result is not None:
         logger.info("Simple predict cache hit item_id=%s", item_id)
@@ -61,6 +63,8 @@ async def simple_predict_by_item_id(item_id: int) -> dict:
 
 
 async def _get_cached_prediction(item_id: int) -> dict | None:
+    """Читает результат предсказания из кэша и проверяет обязательные поля."""
+
     try:
         cached_row = await prediction_cache_storage.get(item_id)
     except Exception:
@@ -81,6 +85,8 @@ async def _get_cached_prediction(item_id: int) -> dict | None:
 
 
 async def _set_cached_prediction(item_id: int, row: dict) -> None:
+    """Сохраняет результат предсказания в кэш, не пробрасывая сбои Redis наружу."""
+
     try:
         await prediction_cache_storage.set(item_id, row)
     except Exception:

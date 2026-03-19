@@ -269,6 +269,8 @@ class ModerationWorker:
         exc: Exception | None = None,
         task_id: int | None = None,
     ) -> None:
+        """Фиксирует terminal failure, сохраняет `failed`-статус и публикует сообщение в DLQ."""
+
         self._capture_terminal_error(
             exc or RuntimeError(error_message),
             item_id=item_id,
@@ -302,6 +304,8 @@ class ModerationWorker:
         exc: Exception | None = None,
         task_id: int | None = None,
     ) -> bool:
+        """Решает, делать ли retry для временной ошибки, или завершать задачу как failed."""
+
         if temporary and attempt < self.max_attempts:
             logger.warning(
                 "Temporary moderation error item_id=%s attempt=%s/%s retry_in=%ss error=%s",
@@ -327,6 +331,8 @@ class ModerationWorker:
 
     @staticmethod
     def _compose_error_message(base_message: str, exc: Exception | None) -> str:
+        """Собирает читаемое сообщение об ошибке из базового текста и текста исключения."""
+
         if exc is None:
             return base_message
         details = str(exc).strip()
@@ -360,6 +366,8 @@ class ModerationWorker:
 
     @staticmethod
     def _is_temporary_prediction_error(exc: Exception) -> bool:
+        """Определяет, можно ли считать ошибку предсказания временной и ретраить её."""
+
         return isinstance(exc, ModelNotLoadedError)
 
     @staticmethod
@@ -372,6 +380,8 @@ class ModerationWorker:
         error_message: str,
         task_id: int | None = None,
     ) -> None:
+        """Отправляет terminal failure воркера в Sentry с контекстом задачи и этапа."""
+
         sentry_observability.capture_exception(
             exc,
             tags={
@@ -433,6 +443,8 @@ class ModerationWorker:
 
     @staticmethod
     def _extract_retry_count(payload: Any) -> int:
+        """Извлекает `retry_count` из payload, возвращая `0` для невалидных сообщений."""
+
         if not isinstance(payload, (bytes, bytearray)):
             return 0
         try:
@@ -449,6 +461,8 @@ class ModerationWorker:
 
     @staticmethod
     def _parse_max_attempts(raw_value: str | None, default: int) -> int:
+        """Парсит лимит попыток из env и гарантирует минимум одну попытку."""
+
         try:
             parsed = int(raw_value) if raw_value is not None else default
         except (TypeError, ValueError):
@@ -457,6 +471,8 @@ class ModerationWorker:
 
     @staticmethod
     def _parse_retry_delay_seconds(raw_value: str | None, default: float) -> float:
+        """Парсит задержку между retry из env и не допускает отрицательное значение."""
+
         try:
             parsed = float(raw_value) if raw_value is not None else default
         except (TypeError, ValueError):
